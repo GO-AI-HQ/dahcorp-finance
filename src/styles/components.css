@@ -1,0 +1,544 @@
+/* ── Glass cards ─────────────────────────────────────────────────────────── */
+.card {
+  position: relative;
+  background: linear-gradient(180deg, var(--card2), var(--card));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: var(--space-5);
+  box-shadow: var(--shadow);
+}
+.card--tight {
+  padding: var(--space-4);
+  border-radius: var(--radius-sm);
+}
+.card--accent {
+  border-color: rgba(212, 175, 55, 0.3);
+}
+.card--intel {
+  border-color: rgba(185, 166, 242, 0.28);
+}
+.card--risk {
+  border-color: rgba(224, 102, 94, 0.32);
+}
+.card__label {
+  font-size: 0.68rem;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--soft);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: var(--space-3);
+}
+.card__title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.card__hint {
+  font-size: 0.78rem;
+  color: var(--soft);
+  margin-top: var(--space-3);
+}
+
+/* ── Numbers ─────────────────────────────────────────────────────────────── */
+.figure {
+  font-size: clamp(1.7rem, 1.2rem + 1.8vw, 2.4rem);
+  font-weight: 570;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.figure--sm {
+  font-size: 1.3rem;
+}
+.figure--gold {
+  color: var(--gold2);
+}
+.figure--ice {
+  color: var(--ice);
+}
+.num {
+  font-variant-numeric: tabular-nums;
+}
+.delta {
+  font-size: 0.84rem;
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.delta--up {
+  color: var(--positive);
+}
+.delta--down {
+  color: var(--negative);
+}
+.delta--flat {
+  color: var(--soft);
+}
+.meta {
+  font-size: 0.8rem;
+  color: var(--soft);
+}
+.muted {
+  color: var(--muted);
+}
+.soft {
+  color: var(--soft);
+}
+
+/* ── Badges. Always paired with a text label, never colour alone. ────────── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.badge__glyph {
+  font-size: 0.68rem;
+  line-height: 1;
+}
+.badge--gold {
+  color: var(--gold2);
+  border-color: rgba(212, 175, 55, 0.36);
+  background: var(--gold-dim);
+}
+.badge--ice {
+  color: var(--ice);
+  border-color: rgba(154, 215, 255, 0.32);
+  background: var(--ice-dim);
+}
+.badge--positive {
+  color: var(--positive);
+  border-color: rgba(75, 191, 138, 0.34);
+  background: var(--positive-dim);
+}
+.badge--negative {
+  color: var(--negative);
+  border-color: rgba(224, 102, 94, 0.36);
+  background: var(--negative-dim);
+}
+.badge--warning {
+  color: var(--warning);
+  border-color: rgba(224, 168, 60, 0.34);
+  background: var(--warning-dim);
+}
+.badge--intel {
+  color: var(--intel);
+  border-color: rgba(185, 166, 242, 0.34);
+  background: var(--intel-dim);
+}
+.badge--risk {
+  color: #f2b3ae;
+  border-color: rgba(140, 29, 24, 0.6);
+  background: var(--danger-dim);
+}
+
+/* ── Progress ────────────────────────────────────────────────────────────── */
+.progress {
+  --progress-color: var(--gold);
+  --progress-color-2: var(--gold2);
+}
+.progress__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.progress__track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+.progress__fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--progress-color), var(--progress-color-2));
+  transition: width 0.5s ease;
+}
+.progress--ice {
+  --progress-color: #4b8fc0;
+  --progress-color-2: var(--ice);
+}
+.progress--positive {
+  --progress-color: #2f8f68;
+  --progress-color-2: var(--positive);
+}
+.progress--risk {
+  --progress-color: var(--danger);
+  --progress-color-2: var(--negative);
+}
+.progress__caption {
+  margin-top: 6px;
+  font-size: 0.76rem;
+  color: var(--soft);
+}
+
+/* ── Tables ──────────────────────────────────────────────────────────────── */
+.table-wrap {
+  overflow-x: auto;
+  margin: 0 calc(-1 * var(--space-2));
+  padding: 0 var(--space-2);
+}
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+table.data th,
+table.data td {
+  padding: 10px 12px;
+  text-align: right;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+table.data th {
+  font-size: 0.7rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--soft);
+  font-weight: 500;
+  position: sticky;
+  top: 0;
+  background: rgba(8, 11, 16, 0.94);
+  backdrop-filter: blur(6px);
+}
+table.data th:first-child,
+table.data td:first-child {
+  text-align: left;
+}
+table.data tbody tr:hover {
+  background: rgba(255, 255, 255, 0.026);
+}
+table.data td.num {
+  font-variant-numeric: tabular-nums;
+}
+.symbol {
+  font-weight: 560;
+  letter-spacing: 0.01em;
+}
+.symbol__name {
+  display: block;
+  font-weight: 400;
+  font-size: 0.76rem;
+  color: var(--soft);
+  white-space: normal;
+  max-width: 22ch;
+}
+
+/* ── Definition rows ─────────────────────────────────────────────────────── */
+.kv {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  padding: 7px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 0.86rem;
+}
+.kv:last-child {
+  border-bottom: none;
+}
+.kv__key {
+  color: var(--muted);
+}
+.kv__value {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--card2);
+  color: var(--ink);
+  font-size: 0.86rem;
+  transition: border-color 0.16s ease, background 0.16s ease, transform 0.12s ease;
+}
+.btn:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.1);
+}
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn--gold {
+  border-color: rgba(212, 175, 55, 0.45);
+  background: linear-gradient(180deg, rgba(212, 175, 55, 0.26), rgba(212, 175, 55, 0.12));
+  color: var(--gold2);
+}
+.btn--gold:hover:not(:disabled) {
+  border-color: var(--gold);
+  background: linear-gradient(180deg, rgba(212, 175, 55, 0.34), rgba(212, 175, 55, 0.16));
+}
+.btn--ghost {
+  background: transparent;
+}
+.btn--danger {
+  border-color: rgba(140, 29, 24, 0.7);
+  background: var(--danger-dim);
+  color: #f2b3ae;
+}
+.btn--sm {
+  padding: 6px 12px;
+  font-size: 0.8rem;
+}
+.btn--block {
+  width: 100%;
+}
+
+/* ── Forms ───────────────────────────────────────────────────────────────── */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.field__label {
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+.field__hint {
+  font-size: 0.74rem;
+  color: var(--soft);
+}
+input[type='text'],
+input[type='password'],
+input[type='number'],
+input[type='date'],
+select,
+textarea {
+  width: 100%;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  color: var(--ink);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: rgba(212, 175, 55, 0.5);
+  outline: none;
+}
+input[type='range'] {
+  width: 100%;
+  accent-color: var(--gold);
+  background: transparent;
+}
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.86rem;
+}
+.chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.chip[aria-pressed='true'] {
+  color: var(--gold2);
+  border-color: rgba(212, 175, 55, 0.45);
+  background: var(--gold-dim);
+}
+
+/* ── Banners and states ──────────────────────────────────────────────────── */
+.banner {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+.banner--mock {
+  border-color: rgba(224, 168, 60, 0.4);
+  background: var(--warning-dim);
+  color: #f0d9a8;
+}
+.banner--risk {
+  border-color: rgba(140, 29, 24, 0.65);
+  background: var(--danger-dim);
+  color: #f3c4c0;
+}
+.banner--intel {
+  border-color: rgba(185, 166, 242, 0.34);
+  background: var(--intel-dim);
+}
+.banner__glyph {
+  flex-shrink: 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.banner__title {
+  color: var(--ink);
+  font-weight: 540;
+  display: block;
+}
+
+.state {
+  padding: var(--space-6) var(--space-4);
+  text-align: center;
+  color: var(--soft);
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+}
+.state__title {
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+
+.skeleton {
+  border-radius: var(--radius-xs);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.04));
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+  height: 1em;
+}
+@keyframes shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* ── Login ───────────────────────────────────────────────────────────────── */
+.login {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+}
+.login__card {
+  width: min(430px, 100%);
+}
+
+/* ── Flywheel ────────────────────────────────────────────────────────────── */
+.flywheel {
+  display: grid;
+  gap: var(--space-3);
+}
+.flywheel__leg {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--card);
+}
+.flywheel__node {
+  font-weight: 560;
+  font-size: 0.9rem;
+}
+.flywheel__arrow {
+  position: relative;
+  height: 2px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.24));
+  border-radius: 2px;
+}
+.flywheel__leg--armed .flywheel__arrow {
+  background: linear-gradient(90deg, rgba(212, 175, 55, 0.4), var(--gold));
+}
+.flywheel__arrow::after {
+  content: '▸';
+  position: absolute;
+  right: -4px;
+  top: -10px;
+  color: var(--soft);
+  font-size: 0.8rem;
+}
+.flywheel__leg--armed .flywheel__arrow::after {
+  color: var(--gold2);
+}
+
+/* ── Charts ──────────────────────────────────────────────────────────────── */
+.chart {
+  width: 100%;
+  height: 240px;
+}
+.chart--tall {
+  height: 320px;
+}
+.chart-tooltip {
+  background: rgba(3, 5, 7, 0.95);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  padding: 8px 10px;
+  font-size: 0.8rem;
+  box-shadow: var(--shadow);
+}
+.chart-tooltip__label {
+  color: var(--soft);
+  margin-bottom: 4px;
+}
+
+/* ── Utility ─────────────────────────────────────────────────────────────── */
+.divider {
+  height: 1px;
+  background: var(--line);
+  margin: var(--space-4) 0;
+}
+.list-reset {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.bullets {
+  margin: 0;
+  padding-left: 1.1em;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+.bullets li {
+  margin-bottom: 5px;
+}
+.tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
