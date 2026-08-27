@@ -7,6 +7,7 @@
  */
 import type { AnalysisContext } from '../services/analysis.js';
 import { activeMilestone, strategyLevelFor } from '../core/config.js';
+import { CALCULATION_SCOPE_LABELS } from '../core/scope.js';
 import type { AllocationPlan, OpportunityRow } from '../strategy/allocation.js';
 import type { SemiconductorEngine } from '../core/semiconductor.js';
 import { round } from '../core/math.js';
@@ -16,8 +17,14 @@ export interface AgentDigest {
   dataQuality: string;
   containsMockData: boolean;
   policy: {
-    liquidityReserve: number;
-    investableCashAfterReserve: number;
+    calculationScope: string;
+    calculationScopeLabel: string;
+    externalLiquidityTarget: number;
+    externalLiquidityCurrent: number;
+    externalLiquidityGap: number;
+    externalReserveUnderfunded: boolean;
+    brokerCash: number;
+    deployableBrokerCash: number;
     maxLeveragedSleevePct: number;
     currentLeveragedPct: number;
     maxSinglePositionPct: number;
@@ -31,6 +38,10 @@ export interface AgentDigest {
   totals: { portfolioValue: number; cash: number; invested: number; unrealizedPL: number };
   milestone: { label: string; monthlyIncome: number; progressPct: number; strategyLevel: string };
   income: {
+    scope: string;
+    scopeLabel: string;
+    incomeEngineCapital: number;
+    excludedByScope: { symbol: string; accountName: string; marketValue: number; reason: string }[];
     forwardMonthlyIncome: number;
     conservativeMonthlyIncome: number;
     received30d: number;
@@ -47,6 +58,11 @@ export interface AgentDigest {
     marketValue: number;
     weight: number;
     unrealizedPLPct: number | null;
+    accountType: string;
+    verification: string;
+    /** Only CONFIRMED positions may drive a live decision. */
+    liveDecisionEligible: boolean;
+    inCalculationScope: boolean;
     monthlySelfBuyRatio?: number | null;
     sharesNeededToSelfFund?: number | null;
     distributionStability?: number;
@@ -70,7 +86,11 @@ export interface AgentDigest {
       leverage: number;
       held: boolean;
       trend: string;
+      /** True when the rule's price condition is met, regardless of verification. */
       harvestArmed: boolean;
+      /** True only when the condition is met AND the position is CONFIRMED. */
+      harvestArmedLive: boolean;
+      harvestVerification: string;
       harvestRule: string;
       riskAction: string;
       volatilityDrag: number | null;
@@ -101,14 +121,21 @@ export function buildAgentDigest(args: {
   const { snapshot, analysis, income, config } = ctx;
   const milestone = activeMilestone(config);
   const level = strategyLevelFor(income.forwardMonthlyIncome);
+  const scopedHoldingIds = new Set(analysis.scoped.positions.map((p) => p.holding.id));
 
   return {
     asOf: snapshot.asOf,
     dataQuality: snapshot.dataQuality,
     containsMockData: snapshot.containsMockData,
     policy: {
-      liquidityReserve: config.liquidityReserve,
-      investableCashAfterReserve: round(capital, 2),
+      calculationScope: config.calculationScope,
+      calculationScopeLabel: CALCULATION_SCOPE_LABELS[config.calculationScope],
+      externalLiquidityTarget: round(analysis.totals.externalLiquidityTarget, 2),
+      externalLiquidityCurrent: round(analysis.totals.externalLiquidityCurrent, 2),
+      externalLiquidityGap: round(analysis.totals.externalLiquidityGap, 2),
+      externalReserveUnderfunded: analysis.totals.externalReserveUnderfunded,
+      brokerCash: round(analysis.totals.brokerCash, 2),
+      deployableBrokerCash: round(capital, 2),
       maxLeveragedSleevePct: config.maxLeveragedSleevePct,
       currentLeveragedPct: round(analysis.leveragedPct, 4),
       maxSinglePositionPct: config.maxSinglePositionPct,
@@ -140,6 +167,15 @@ export function buildAgentDigest(args: {
       strategyLevel: `${level.level} — ${level.name}`,
     },
     income: {
+      scope: income.scope,
+      scopeLabel: income.scopeLabel,
+      incomeEngineCapital: round(analysis.scoped.incomeEngineCapital, 2),
+      excludedByScope: income.excluded.map((e) => ({
+        symbol: e.symbol,
+        accountName: e.accountName,
+        marketValue: round(e.marketValue, 2),
+        reason: e.reason,
+      })),
       forwardMonthlyIncome: round(income.forwardMonthlyIncome, 2),
       conservativeMonthlyIncome: round(income.conservativeMonthlyIncome, 2),
       received30d: round(income.received30d, 2),
@@ -158,6 +194,10 @@ export function buildAgentDigest(args: {
         marketValue: round(p.marketValue, 2),
         weight: round(p.weight, 4),
         unrealizedPLPct: p.unrealizedPLPct,
+        accountType: p.accountType,
+        verification: p.verification,
+        liveDecisionEligible: p.verified,
+        inCalculationScope: scopedHoldingIds.has(p.holding.id),
         monthlySelfBuyRatio: incomeView?.selfBuy.monthlySelfBuyRatio ?? null,
         sharesNeededToSelfFund: incomeView?.selfBuy.sharesRequiredForOnePerMonth ?? null,
         distributionStability: incomeView?.stats.stability,
@@ -193,6 +233,8 @@ export function buildAgentDigest(args: {
         held: t.held,
         trend: t.trend.status,
         harvestArmed: t.harvest.armed,
+        harvestArmedLive: t.harvest.armedLive,
+        harvestVerification: t.harvest.verification,
         harvestRule: t.harvest.ruleOutcome,
         riskAction: t.riskReduction.recommendedAction,
         volatilityDrag: t.estimatedVolatilityDrag,

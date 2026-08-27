@@ -2,7 +2,8 @@ import type { StrategyConfig } from '../core/config.js';
 import type { Quote } from '../core/types.js';
 import { safeDiv } from '../core/math.js';
 import { getInstrumentOrFallback } from '../core/universe.js';
-import type { PortfolioAnalysis } from '../core/portfolio.js';
+import type { PortfolioAnalysis, ScopeView } from '../core/portfolio.js';
+import { riskScopeFor, type RiskRuleKind } from '../core/scope.js';
 import type { IncomeSummary } from '../core/income.js';
 import type { ProposedOrder, RiskDecision, RiskFinding, ValidatedOrder } from './types.js';
 
@@ -68,36 +69,60 @@ export function validateOrders(orders: ProposedOrder[], ctx: RiskContext): RiskD
   const buys = orders.filter((o) => o.side === 'buy');
   const requestedBuyNotional = buys.reduce((acc, o) => acc + (o.notional ?? 0), 0);
 
-  // ── Reserve check. Capital designated as liquidity reserve is never
-  // available for investment, no matter what any recommendation says.
-  const investableCash = analysis.totals.investableCash;
-  if (requestedBuyNotional > investableCash) {
+  // ── Cash check. Only brokerage cash can fund a brokerage order; the
+  // household reserve lives outside the brokerages and is never counted here,
+  // in either direction. Being under the household target is a warning, not a
+  // block, so planned contributions can still be analysed and allocated.
+  const deployable = analysis.totals.deployableBrokerCash;
+  if (requestedBuyNotional > deployable) {
     batchFindings.push(
       block(
         'INSUFFICIENT_INVESTABLE_CASH',
-        `Requested buys total $${requestedBuyNotional.toFixed(2)} but only $${investableCash.toFixed(2)} is investable after the $${config.liquidityReserve.toFixed(0)} liquidity reserve.`,
-        investableCash,
+        `Requested buys total $${requestedBuyNotional.toFixed(2)} but only $${deployable.toFixed(2)} of brokerage cash is deployable in allocation-eligible accounts after the $${config.brokerCashFloor.toFixed(0)} settlement floor.`,
+        deployable,
         requestedBuyNotional,
       ),
     );
   }
-  if (analysis.totals.totalCash < config.liquidityReserve) {
+  if (analysis.totals.externalReserveUnderfunded) {
     batchFindings.push(
       warn(
-        'RESERVE_UNDERFUNDED',
-        `Total cash of $${analysis.totals.totalCash.toFixed(2)} is below the configured liquidity reserve of $${config.liquidityReserve.toFixed(0)}. No new capital should be deployed until the reserve is restored.`,
-        config.liquidityReserve,
-        analysis.totals.totalCash,
+        'EXTERNAL_RESERVE_UNDERFUNDED',
+        `Household liquidity of $${analysis.totals.externalLiquidityCurrent.toFixed(2)} is $${analysis.totals.externalLiquidityGap.toFixed(2)} below the $${analysis.totals.externalLiquidityTarget.toFixed(0)} external reserve target. Contributions may still be allocated, but restoring the reserve should take priority over increasing investment pace.`,
+        analysis.totals.externalLiquidityTarget,
+        analysis.totals.externalLiquidityCurrent,
       ),
     );
   }
+  const reserveFunded = orders.filter((o) => o.fundingSource === 'external_reserve');
+  if (reserveFunded.length) {
+    batchFindings.push(
+      block(
+        'EXTERNAL_RESERVE_DRAW',
+        `${reserveFunded.length} order${reserveFunded.length === 1 ? '' : 's'} declare the protected external reserve as their funding source. The household reserve may never be drawn down to fund investment.`,
+      ),
+    );
+  }
+
+  /**
+   * The scope a risk limit is measured in — see `riskScopeFor`. Numerators and
+   * denominators both use *confirmed* capital only, so a simulated fixture can
+   * demonstrate the arithmetic without gating a real recommendation.
+   */
+  const viewFor = (kind: RiskRuleKind, accountType: PortfolioAnalysis['positions'][number]['accountType']): ScopeView =>
+    analysis.scopes[riskScopeFor(kind, accountType, config.wholePortfolioRules)];
+  const confirmedIn = (view: ScopeView) => view.positions.filter((p) => p.verified);
 
   const seenKeys = new Set(ctx.recentOrderKeys ?? []);
   const batchKeys = new Set<string>();
 
   // Running totals so a batch is validated as a whole, not order by order.
-  let runningLeveragedValue = analysis.leveragedValue;
+  const leverageBaseline = viewFor('sleeve', 'taxable');
+  let runningLeveragedValue = confirmedIn(leverageBaseline)
+    .filter((p) => p.leverage > 1)
+    .reduce((acc, p) => acc + p.marketValue, 0);
   let runningCash = analysis.totals.totalCash;
+  let runningDeployableCash = deployable;
   let runningTotalValue = analysis.totals.totalValue;
 
   const validated: ValidatedOrder[] = orders.map((order) => {
@@ -181,12 +206,16 @@ export function validateOrders(orders: ProposedOrder[], ctx: RiskContext): RiskD
       allowed = config.maxOrderNotional;
     }
 
+    const accountType = account?.type ?? 'taxable';
+
     if (order.side === 'buy') {
-      // ── Single-position concentration.
-      const symbolTotal = analysis.positions
+      // ── Single-position concentration, measured in the risk scope.
+      const positionScopeView = viewFor('concentration', accountType);
+      const symbolTotal = confirmedIn(positionScopeView)
         .filter((p) => p.symbol === symbol)
         .reduce((acc, p) => acc + p.marketValue, 0);
-      const projectedTotalValue = runningTotalValue; // a buy converts cash to position value
+      // A buy converts cash to position value, so the denominator is unchanged.
+      const projectedTotalValue = positionScopeView.verifiedTotalValue;
       const maxPositionValue = projectedTotalValue * config.maxSinglePositionPct;
       if (symbolTotal + allowed > maxPositionValue) {
         const reduced = Math.max(0, maxPositionValue - symbolTotal);
@@ -209,8 +238,12 @@ export function validateOrders(orders: ProposedOrder[], ctx: RiskContext): RiskD
       }
 
       // ── Underlying-exposure concentration. NVDY and NVDA are the same bet.
-      const exposureValue = analysis.exposures.find((e) => e.exposure === instrument.exposure)?.marketValue ?? 0;
-      const maxExposureValue = projectedTotalValue * config.maxSingleExposurePct;
+      const exposureScopeView = viewFor('exposure', accountType);
+      const exposureValue = confirmedIn(exposureScopeView)
+        .filter((p) => p.exposure === instrument.exposure)
+        .reduce((acc, p) => acc + p.marketValue, 0);
+      const exposureTotalValue = exposureScopeView.verifiedTotalValue;
+      const maxExposureValue = exposureTotalValue * config.maxSingleExposurePct;
       if (exposureValue + allowed > maxExposureValue) {
         const reduced = Math.max(0, maxExposureValue - exposureValue);
         findings.push(
@@ -219,13 +252,13 @@ export function validateOrders(orders: ProposedOrder[], ctx: RiskContext): RiskD
                 'EXPOSURE_LIMIT_REDUCED',
                 `Order reduced to $${reduced.toFixed(2)} to keep total ${instrument.exposure.toUpperCase()} exposure within ${(config.maxSingleExposurePct * 100).toFixed(0)}%.`,
                 config.maxSingleExposurePct,
-                safeDiv(exposureValue + allowed, projectedTotalValue),
+                safeDiv(exposureValue + allowed, exposureTotalValue),
               )
             : block(
                 'EXPOSURE_LIMIT_BLOCK',
                 `Underlying exposure to ${instrument.exposure.toUpperCase()} is already at the ${(config.maxSingleExposurePct * 100).toFixed(0)}% ceiling.`,
                 config.maxSingleExposurePct,
-                safeDiv(exposureValue, projectedTotalValue),
+                safeDiv(exposureValue, exposureTotalValue),
               ),
         );
         allowed = Math.min(allowed, reduced);
@@ -233,8 +266,10 @@ export function validateOrders(orders: ProposedOrder[], ctx: RiskContext): RiskD
 
       // ── Leveraged sleeve ceiling. This is the check that stops a
       // recommendation from quietly pushing SOXL + TSMX past the limit.
+      const sleeveScopeView = viewFor('sleeve', accountType);
+      const sleeveTotalValue = sleeveScopeView.verifiedTotalValue;
       if (instrument.leverage > 1) {
-        const maxLeveragedValue = projectedTotalValue * config.maxLeveragedSleevePct;
+        const maxLeveragedValue = sleeveTotalValue * config.maxLeveragedSleevePct;
         if (runningLeveragedValue + allowed > maxLeveragedValue) {
           const reduced = Math.max(0, maxLeveragedValue - runningLeveragedValue);
           findings.push(
@@ -243,13 +278,13 @@ export function validateOrders(orders: ProposedOrder[], ctx: RiskContext): RiskD
                   'LEVERAGE_LIMIT_REDUCED',
                   `Order reduced to $${reduced.toFixed(2)} to keep the leveraged sleeve within ${(config.maxLeveragedSleevePct * 100).toFixed(0)}% of portfolio value.`,
                   config.maxLeveragedSleevePct,
-                  safeDiv(runningLeveragedValue + allowed, projectedTotalValue),
+                  safeDiv(runningLeveragedValue + allowed, sleeveTotalValue),
                 )
               : block(
                   'LEVERAGE_LIMIT_BLOCK',
                   `The leveraged sleeve is at the configured ceiling of ${(config.maxLeveragedSleevePct * 100).toFixed(0)}%. No further ${symbol} purchase is permitted without an explicit configuration change.`,
                   config.maxLeveragedSleevePct,
-                  safeDiv(runningLeveragedValue, projectedTotalValue),
+                  safeDiv(runningLeveragedValue, sleeveTotalValue),
                 ),
           );
           allowed = Math.min(allowed, reduced);
@@ -259,8 +294,10 @@ export function validateOrders(orders: ProposedOrder[], ctx: RiskContext): RiskD
       // ── Sleeve ceilings.
       const sleeveCeiling = config.sleeveCeilings[order.sleeve];
       if (sleeveCeiling != null) {
-        const sleeveValue = analysis.sleeves.find((s) => s.sleeve === order.sleeve)?.marketValue ?? 0;
-        const maxSleeveValue = projectedTotalValue * sleeveCeiling;
+        const sleeveValue = confirmedIn(sleeveScopeView)
+          .filter((p) => p.sleeve === order.sleeve)
+          .reduce((acc, p) => acc + p.marketValue, 0);
+        const maxSleeveValue = sleeveTotalValue * sleeveCeiling;
         if (sleeveValue + allowed > maxSleeveValue) {
           const reduced = Math.max(0, maxSleeveValue - sleeveValue);
           findings.push(
@@ -268,27 +305,27 @@ export function validateOrders(orders: ProposedOrder[], ctx: RiskContext): RiskD
               'SLEEVE_LIMIT_REDUCED',
               `Order reduced to $${reduced.toFixed(2)} to respect the ${(sleeveCeiling * 100).toFixed(0)}% ceiling on the ${order.sleeve.replace(/_/g, ' ')} sleeve.`,
               sleeveCeiling,
-              safeDiv(sleeveValue + allowed, projectedTotalValue),
+              safeDiv(sleeveValue + allowed, sleeveTotalValue),
             ),
           );
           allowed = Math.min(allowed, reduced);
         }
       }
 
-      // ── Cash after the reserve, applied cumulatively across the batch.
-      const availableNow = Math.max(0, runningCash - config.liquidityReserve);
+      // ── Deployable brokerage cash, applied cumulatively across the batch.
+      const availableNow = Math.max(0, runningDeployableCash);
       if (allowed > availableNow) {
         findings.push(
           availableNow > 0
             ? warn(
                 'CASH_LIMIT_REDUCED',
-                `Order reduced to $${availableNow.toFixed(2)} — the remaining investable cash after the liquidity reserve and earlier orders in this batch.`,
+                `Order reduced to $${availableNow.toFixed(2)} — the brokerage cash remaining after the settlement floor and earlier orders in this batch.`,
                 availableNow,
                 allowed,
               )
             : block(
                 'NO_INVESTABLE_CASH',
-                `No investable cash remains after the $${config.liquidityReserve.toFixed(0)} liquidity reserve and earlier orders in this batch.`,
+                `No deployable brokerage cash remains after the $${config.brokerCashFloor.toFixed(0)} settlement floor and earlier orders in this batch. The protected external reserve is not an available funding source.`,
                 0,
                 allowed,
               ),
@@ -297,10 +334,20 @@ export function validateOrders(orders: ProposedOrder[], ctx: RiskContext): RiskD
       }
 
       runningCash -= allowed;
+      runningDeployableCash -= allowed;
       if (instrument.leverage > 1) runningLeveragedValue += allowed;
     } else {
-      // ── Sells: cannot sell more than is held.
+      // ── Sells: cannot sell more than is held, and never an unverified lot.
       const heldShares = position?.shares ?? 0;
+      if (position && !position.verified) {
+        findings.push(
+          block(
+            'UNVERIFIED_POSITION',
+            `${symbol} in ${account?.name ?? order.accountId} is ${position.verification}. An unverified holding cannot be sold or harvested until a brokerage adapter confirms ownership and cost basis.`,
+          ),
+        );
+        allowed = 0;
+      }
       const requestedShares = order.quantity ?? (price ? allowed / price : 0);
       if (heldShares <= 0) {
         findings.push(block('NO_POSITION', `No ${symbol} position held in this account to sell.`));
@@ -317,6 +364,7 @@ export function validateOrders(orders: ProposedOrder[], ctx: RiskContext): RiskD
         allowed = heldShares * (price ?? 0);
       }
       runningCash += allowed;
+      runningDeployableCash += account?.allocationEligible ? allowed : 0;
       if (instrument.leverage > 1) runningLeveragedValue = Math.max(0, runningLeveragedValue - allowed);
     }
 

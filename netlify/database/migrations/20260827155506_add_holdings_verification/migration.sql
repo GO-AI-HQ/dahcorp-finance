@@ -1,0 +1,1 @@
+ALTER TABLE "holdings" ADD COLUMN "verification" text DEFAULT 'CONFIRMED' NOT NULL;

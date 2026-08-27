@@ -9,6 +9,7 @@
  */
 import type { StrategyConfig } from '../core/config.js';
 import { DISTRIBUTION_BASIS_LABELS, activeMilestone } from '../core/config.js';
+import { CALCULATION_SCOPE_DESCRIPTIONS, CALCULATION_SCOPE_LABELS } from '../core/scope.js';
 import type { AgentDigest } from './digest.js';
 
 export function buildSystemPrompt(config: StrategyConfig): string {
@@ -27,7 +28,7 @@ YOUR ROLE
 HARD RULES
 1. Never treat a distribution as pure profit because cash arrived. Distinguish distribution income, return of capital, NAV change and total return. A high payout funded by NAV erosion is capital being handed back, not income earned.
 2. Never rank an investment by advertised yield alone. Use the cash-flow efficiency score, distribution stability, NAV preservation, total return, ROC share, drawdown and liquidity that are supplied to you.
-3. Never recommend investing capital that belongs to the liquidity reserve of $${config.liquidityReserve.toFixed(0)}.
+3. Never recommend drawing from the protected external liquidity reserve. The $${config.externalLiquidityTarget.toFixed(0)} household reserve is held outside the brokerages and is not investable capital under any circumstance. If it is underfunded, you may say that restoring it should take priority over increasing investment pace, but you may not propose funding a purchase from it, and you must not withhold brokerage contributions on its behalf.
 4. Never recommend allocation to an account marked ineligible (retirement and education sleeves are excluded by policy).
 5. Never recommend a purchase that pushes the leveraged sleeve (SOXL, TSMX and similar) above ${(config.maxLeveragedSleevePct * 100).toFixed(0)}% of the portfolio.
 6. Never treat 2x or 3x DAILY leverage as 2x or 3x long-term return. Daily reset plus volatility means path matters; volatility drag estimates are supplied.
@@ -41,6 +42,8 @@ CURRENT POLICY CONTEXT
 - Active income milestone: ${milestone.label} at $${milestone.monthlyIncome}/month.
 - Distribution basis in use: ${DISTRIBUTION_BASIS_LABELS[config.distributionBasis]} (conservative haircut ${(config.conservativeHaircut * 100).toFixed(0)}%).
 - Maximum single order: $${config.maxOrderNotional.toFixed(0)}. Maximum single position: ${(config.maxSinglePositionPct * 100).toFixed(0)}% of portfolio.
+- Calculation scope in force: ${CALCULATION_SCOPE_LABELS[config.calculationScope]}. ${CALCULATION_SCOPE_DESCRIPTIONS[config.calculationScope]}
+- Positions carry a verification status. Only CONFIRMED holdings may drive a live decision. A SIMULATED or UNVERIFIED position illustrates the calculation only: never cite it as a real concentration, risk, harvest or allocation trigger, and say plainly that it is unverified when you reference it.
 - Execution phase ${config.executionPhase}: observation and analysis only. No order can be placed by anyone through this system yet.
 - The 50/50 income split is a starting configuration, not a rule. Recommend a different mix when the evidence supports it, and explain why.
 
@@ -59,7 +62,7 @@ export function buildUserPrompt(args: { question: string; digest: AgentDigest; c
 ${question}
 
 CAPITAL AVAILABLE FOR THIS DECISION
-$${capital.toFixed(2)} (already net of the liquidity reserve).
+$${capital.toFixed(2)} of deployable brokerage cash in allocation-eligible accounts. This figure excludes the protected external household reserve, which is not part of it and may never be added to it.
 
 PORTFOLIO AND POLICY DIGEST (JSON)
 ${JSON.stringify(digest, null, 2)}

@@ -1,3 +1,5 @@
+import type { CalculationScope, WholePortfolioRules } from './scope.js';
+import { DEFAULT_WHOLE_PORTFOLIO_RULES } from './scope.js';
 import type { Sleeve } from './types.js';
 
 /** Which trailing window to model distributions from. User-selectable. */
@@ -57,8 +59,28 @@ export interface TrendConfig {
  * settings can change them, and the risk engine only ever reads this object.
  */
 export interface StrategyConfig {
-  /** Cash that must never be recommended for investment. */
-  liquidityReserve: number;
+  /**
+   * Which slice of capital every headline calculation is expressed in.
+   * Defaults to the taxable income engine so retirement and education
+   * holdings never dilute the modeled distribution rate.
+   */
+  calculationScope: CalculationScope;
+  /**
+   * Household / external emergency reserve target. This money lives outside
+   * the brokerages (bank, savings, cash) and is *not* expected to sit idle in
+   * Robinhood or Schwab. Being under target raises a warning; it never
+   * converts planned contributions into zero investable cash.
+   */
+  externalLiquidityTarget: number;
+  /** Household / external liquidity currently held, as entered by the investor. */
+  externalLiquidityCurrent: number;
+  /**
+   * Brokerage cash that must stay uninvested for settlement and fees. This is
+   * a working buffer, not the emergency reserve, so it is normally small.
+   */
+  brokerCashFloor: number;
+  /** Risk rules deliberately measured across every account, not just taxable. */
+  wholePortfolioRules: WholePortfolioRules;
   /** Income milestones, ascending. */
   milestones: IncomeMilestone[];
   /** The milestone currently being driven toward. */
@@ -114,7 +136,11 @@ export const MILESTONES: IncomeMilestone[] = [
  * whether a different mix better serves the monthly-income objective.
  */
 export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
-  liquidityReserve: 10_000,
+  calculationScope: 'TAXABLE_INCOME_ENGINE',
+  externalLiquidityTarget: 10_000,
+  externalLiquidityCurrent: 0,
+  brokerCashFloor: 0,
+  wholePortfolioRules: DEFAULT_WHOLE_PORTFOLIO_RULES,
   milestones: MILESTONES,
   activeMilestoneId: 'B',
   targetDate: '',
@@ -152,14 +178,35 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
 };
 
 /** Merge a partial stored config over the defaults, one level deep on objects. */
+/**
+ * A stored or submitted patch. Everything is optional, and the whole-portfolio
+ * risk rules may arrive one key at a time — a UI toggle changes one rule, not
+ * the set.
+ */
+export type StrategyConfigPatch = Partial<Omit<StrategyConfig, 'wholePortfolioRules'>> & {
+  wholePortfolioRules?: Partial<WholePortfolioRules>;
+};
+
 export function mergeStrategyConfig(
   base: StrategyConfig,
-  patch: Partial<StrategyConfig> | null | undefined,
+  patch: StrategyConfigPatch | null | undefined,
 ): StrategyConfig {
   if (!patch) return base;
+  // Pre-1.1 configs stored a single `liquidityReserve`, which conflated the
+  // household emergency fund with brokerage settlement cash. Roll it forward
+  // into the external target it was always meant to describe.
+  const legacyReserve = (patch as { liquidityReserve?: unknown }).liquidityReserve;
+  const migratedExternalTarget =
+    patch.externalLiquidityTarget ??
+    (typeof legacyReserve === 'number' && Number.isFinite(legacyReserve)
+      ? Math.max(0, legacyReserve)
+      : base.externalLiquidityTarget);
   return {
     ...base,
     ...patch,
+    calculationScope: patch.calculationScope ?? base.calculationScope,
+    externalLiquidityTarget: migratedExternalTarget,
+    wholePortfolioRules: { ...base.wholePortfolioRules, ...(patch.wholePortfolioRules ?? {}) },
     milestones: patch.milestones?.length ? patch.milestones : base.milestones,
     incomeAllocationTargets: patch.incomeAllocationTargets ?? base.incomeAllocationTargets,
     sleeveCeilings: { ...base.sleeveCeilings, ...(patch.sleeveCeilings ?? {}) },

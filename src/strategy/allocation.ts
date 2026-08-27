@@ -4,6 +4,7 @@ import { activeMilestone, strategyLevelFor } from '../core/config.js';
 import { safeDiv, simpleReturns } from '../core/math.js';
 import { INCOME_UNIVERSE, getInstrumentOrFallback } from '../core/universe.js';
 import { exposureWeights, type PortfolioAnalysis } from '../core/portfolio.js';
+import { riskScopeFor } from '../core/scope.js';
 import type { IncomeSummary } from '../core/income.js';
 import { computeCashFlowEfficiency, rankIncomeCandidates, type CashFlowEfficiency } from '../core/cashflowEfficiency.js';
 import type { SemiconductorEngine } from '../core/semiconductor.js';
@@ -66,7 +67,9 @@ function buildEfficiencyInputs(
     const bars = snapshot.priceHistory[position.symbol];
     if (bars?.length) holdingReturnSeries[position.symbol] = simpleReturns(bars.map((b) => b.close));
   }
-  const weights = exposureWeights(analysis);
+  // Overlap is judged against the capital the recommendation would actually
+  // land in, so a Roth position does not penalise a taxable candidate.
+  const weights = exposureWeights(analysis, riskScopeFor('exposure', 'taxable', config.wholePortfolioRules));
 
   return symbols
     .map((symbol) => {
@@ -96,7 +99,11 @@ export function rankOpportunities(
 ): OpportunityRow[] {
   const inputs = buildEfficiencyInputs(universe, snapshot, analysis, config);
   const ranked = rankIncomeCandidates(inputs);
-  const heldSymbols = new Set(analysis.positions.filter((p) => p.sleeve === 'income_engine').map((p) => p.symbol));
+  // "Held" means held in the active calculation scope and brokerage-verified.
+  // A simulated fixture must not set the bar a real candidate is measured against.
+  const heldSymbols = new Set(
+    analysis.scoped.positions.filter((p) => p.sleeve === 'income_engine' && p.verified).map((p) => p.symbol),
+  );
   const bestHeldScore = Math.max(
     0,
     ...ranked.filter((r) => heldSymbols.has(r.symbol)).map((r) => r.score),
@@ -141,7 +148,9 @@ export function rankOpportunities(
  * Build the deterministic allocation plan for a given amount of new capital.
  *
  * Priority order, all configurable through StrategyConfig:
- *   1. Never touch the liquidity reserve.
+ *   1. Never draw from the protected external household reserve. It sits
+ *      outside the brokerages, so it is never a source — and an underfunded
+ *      reserve never withholds brokerage contributions either.
  *   2. While below the active income milestone, weight toward the income engine.
  *   3. Within the income engine, weight by cash-flow efficiency, but keep the
  *      configured target weights as a gravitational centre so the plan does not
@@ -200,18 +209,23 @@ export function buildAllocationPlan(args: {
     `Modeled forward income is $${income.forwardMonthlyIncome.toFixed(2)}/mo against the ${milestone.label} target of $${milestone.monthlyIncome}/mo — strategy level ${level.level} (${level.name}).`,
   );
 
-  // ── Step 1: the reserve is untouchable.
-  let deployable = capital;
-  const cashShortfall = Math.max(0, config.liquidityReserve - analysis.totals.totalCash);
+  // ── Step 1: the household reserve is protected, not withheld.
+  //
+  // The external reserve lives outside the brokerages. An underfunded reserve
+  // therefore does not reduce the capital that can be analysed or allocated —
+  // it raises a warning. What is never permitted is the opposite direction:
+  // no leg may ever be funded by drawing the reserve down.
+  const deployable = capital;
   let reserved = 0;
   let reservedReason: string | null = null;
-  if (cashShortfall > 0) {
-    const holdBack = Math.min(capital, cashShortfall);
-    deployable -= holdBack;
-    reserved += holdBack;
-    reservedReason = `$${holdBack.toFixed(2)} held back: total cash is $${cashShortfall.toFixed(2)} below the configured $${config.liquidityReserve.toFixed(0)} liquidity reserve.`;
-    constraints.push(reservedReason);
-    reasoning.push('Liquidity reserve takes priority over investment pace, per policy.');
+  const externalGap = analysis.totals.externalLiquidityGap;
+  if (externalGap > 0) {
+    constraints.push(
+      `Household liquidity is $${externalGap.toFixed(2)} below the $${analysis.totals.externalLiquidityTarget.toFixed(0)} external reserve target. New contributions are still allocated, but the reserve should be restored before increasing pace.`,
+    );
+    reasoning.push(
+      'External reserve is underfunded. It is protected capital: this plan neither draws from it nor withholds brokerage contributions on its behalf.',
+    );
   }
 
   // ── Step 2: split between the income engine and growth per strategy level.
@@ -332,7 +346,9 @@ export function buildAllocationPlan(args: {
   }
 
   for (const t of semis.tactical) {
-    if (t.harvest.armed) {
+    // Only a confirmed holding may justify a live harvest. A simulated fixture
+    // is reported as `SIMULATED — ARMED` elsewhere but never enters reasoning.
+    if (t.harvest.armedLive) {
       reasoning.push(
         `${t.symbol} harvest rule is ARMED: +${((t.harvest.gainPct ?? 0) * 100).toFixed(1)}% vs tactical basis triggers a ${(t.harvest.harvestPortionPct * 100).toFixed(0)}% harvest into ${t.destinationSymbol}.`,
       );
@@ -429,11 +445,11 @@ export function diagnoseDrag(args: {
     });
   }
 
-  if (analysis.totals.totalCash < config.liquidityReserve) {
+  if (analysis.totals.externalReserveUnderfunded) {
     out.push({
       severity: 'medium',
-      title: 'Liquidity reserve underfunded',
-      detail: `Cash of $${analysis.totals.totalCash.toFixed(2)} is below the $${config.liquidityReserve.toFixed(0)} reserve. Policy requires restoring the reserve before accelerating investment.`,
+      title: 'External liquidity reserve underfunded',
+      detail: `Household liquidity of $${analysis.totals.externalLiquidityCurrent.toFixed(2)} is $${analysis.totals.externalLiquidityGap.toFixed(2)} below the $${analysis.totals.externalLiquidityTarget.toFixed(0)} target. This reserve is held outside the brokerages; restoring it takes priority over increasing investment pace, and it is never a funding source.`,
     });
   }
 
@@ -454,21 +470,24 @@ export function diagnoseDrag(args: {
     });
   }
 
-  const investable = analysis.totals.investableCash;
+  const investable = analysis.totals.deployableBrokerCash;
   if (investable > 50 && income.forwardMonthlyIncome < milestone.monthlyIncome) {
     out.push({
       severity: 'low',
-      title: 'Uninvested investable cash',
-      detail: `$${investable.toFixed(2)} sits above the liquidity reserve and is producing no distributions.`,
+      title: 'Uninvested brokerage cash',
+      detail: `$${investable.toFixed(2)} of deployable brokerage cash is producing no distributions.`,
     });
   }
 
-  const concentration = analysis.exposures.find((e) => e.weight > config.maxSingleExposurePct);
+  // Measured in the risk scope, not the whole household: a Roth holding must
+  // not raise a concentration alarm against a taxable-income recommendation.
+  const exposureScope = analysis.scopes[riskScopeFor('exposure', 'taxable', config.wholePortfolioRules)];
+  const concentration = exposureScope.exposures.find((e) => e.weight > config.maxSingleExposurePct);
   if (concentration) {
     out.push({
       severity: 'medium',
       title: `Concentrated in ${concentration.exposure.toUpperCase()}`,
-      detail: `${(concentration.weight * 100).toFixed(1)}% of the portfolio depends on one underlying (${concentration.symbols.join(', ')}), above the ${(config.maxSingleExposurePct * 100).toFixed(0)}% ceiling.`,
+      detail: `${(concentration.weight * 100).toFixed(1)}% of ${exposureScope.label} capital depends on one underlying (${concentration.symbols.join(', ')}), above the ${(config.maxSingleExposurePct * 100).toFixed(0)}% ceiling.`,
     });
   }
 

@@ -53,6 +53,7 @@ export function buildSeedModel(asOf: string): SeedModel {
       tacticalCostBasisTotal: h.tacticalCostPerShare != null ? h.shares * h.tacticalCostPerShare : undefined,
       sleeve: getInstrumentOrFallback(h.symbol).sleeve,
       legacy: h.legacy,
+      verification: h.verification,
       openedAt: opened,
     };
   });

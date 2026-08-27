@@ -14,6 +14,8 @@
  * against a real quote and distribution source.
  */
 
+import type { VerificationStatus } from '../core/scope.js';
+
 export interface FixtureAnchor {
   symbol: string;
   /** Synthetic current price. */
@@ -109,21 +111,30 @@ export interface SeedHolding {
   /** Tactical basis per share for leveraged harvest math. Synthetic. */
   tacticalCostPerShare?: number;
   legacy?: boolean;
+  /**
+   * Whether the position has been verified against a brokerage. Only NVDY and
+   * YMAG are CONFIRMED. Everything else is SIMULATED: it demonstrates the
+   * calculations but must never activate a live strategy trigger.
+   */
+  verification: VerificationStatus;
   /** Weeks ago the position was opened; drives synthetic received-income history. */
   openedWeeksAgo: number;
 }
 
 export const SEED_HOLDINGS: SeedHolding[] = [
-  // Confirmed.
-  { accountKey: 'robinhood_taxable', symbol: 'NVDY', shares: 7.9, costPerShare: 13.41, openedWeeksAgo: 10 },
-  { accountKey: 'schwab_taxable', symbol: 'YMAG', shares: 11, costPerShare: 11.58, openedWeeksAgo: 14 },
-  // Legacy/minor Schwab fractions, per the investor's note.
-  { accountKey: 'schwab_taxable', symbol: 'TSM', shares: 0.1184, costPerShare: 198.42, legacy: true, openedWeeksAgo: 38 },
-  { accountKey: 'schwab_taxable', symbol: 'CCJ', shares: 0.2461, costPerShare: 61.08, legacy: true, openedWeeksAgo: 34 },
-  { accountKey: 'schwab_taxable', symbol: 'SOXL', shares: 1.4072, costPerShare: 21.36, tacticalCostPerShare: 21.36, legacy: true, openedWeeksAgo: 27 },
-  // Secondary accounts — displayed, never allocated to automatically.
-  { accountKey: 'roth_ira', symbol: 'SCHD', shares: 41.2836, costPerShare: 24.19, openedWeeksAgo: 96 },
-  { accountKey: 'education_coverdell', symbol: 'VNQ', shares: 6.1042, costPerShare: 84.71, openedWeeksAgo: 72 },
+  // Confirmed by the investor: 7.90 NVDY (Robinhood) and 11 YMAG (Schwab).
+  // These two are the only holdings permitted to drive live decisions.
+  { accountKey: 'robinhood_taxable', symbol: 'NVDY', shares: 7.9, costPerShare: 13.41, verification: 'CONFIRMED', openedWeeksAgo: 10 },
+  { accountKey: 'schwab_taxable', symbol: 'YMAG', shares: 11, costPerShare: 11.58, verification: 'CONFIRMED', openedWeeksAgo: 14 },
+  // Legacy/minor Schwab fractions. Simulated until a brokerage adapter verifies
+  // ownership and cost basis — SOXL in particular must not arm a real harvest.
+  { accountKey: 'schwab_taxable', symbol: 'TSM', shares: 0.1184, costPerShare: 198.42, legacy: true, verification: 'SIMULATED', openedWeeksAgo: 38 },
+  { accountKey: 'schwab_taxable', symbol: 'CCJ', shares: 0.2461, costPerShare: 61.08, legacy: true, verification: 'SIMULATED', openedWeeksAgo: 34 },
+  { accountKey: 'schwab_taxable', symbol: 'SOXL', shares: 1.4072, costPerShare: 21.36, tacticalCostPerShare: 21.36, legacy: true, verification: 'SIMULATED', openedWeeksAgo: 27 },
+  // Secondary accounts — displayed, never allocated to automatically, and
+  // simulated, so they cannot dilute or gate the taxable income engine.
+  { accountKey: 'roth_ira', symbol: 'SCHD', shares: 41.2836, costPerShare: 24.19, verification: 'SIMULATED', openedWeeksAgo: 96 },
+  { accountKey: 'education_coverdell', symbol: 'VNQ', shares: 6.1042, costPerShare: 84.71, verification: 'SIMULATED', openedWeeksAgo: 72 },
 ];
 
 export const SEED_ACCOUNTS = [

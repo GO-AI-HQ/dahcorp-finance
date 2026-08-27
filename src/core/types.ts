@@ -7,6 +7,10 @@
  * arguments.
  */
 
+import type { VerificationStatus } from './scope.js';
+
+export type { CalculationScope, VerificationStatus } from './scope.js';
+
 /** Where a holding sits in the four-engine strategy. */
 export type Sleeve =
   | 'income_engine'
@@ -54,6 +58,12 @@ export interface Holding {
   sleeve: Sleeve;
   /** Set when the position is a legacy remnant rather than an active thesis. */
   legacy?: boolean;
+  /**
+   * Whether ownership and cost basis have been verified against a brokerage.
+   * Absent means CONFIRMED — fixtures opt into SIMULATED explicitly, so that
+   * demonstration data can never arm a live trigger.
+   */
+  verification?: VerificationStatus;
   openedAt?: string;
 }
 

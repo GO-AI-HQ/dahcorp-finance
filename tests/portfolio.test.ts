@@ -100,24 +100,50 @@ describe('analyzePortfolio totals', () => {
     expect(analysis.totals.unrealizedPL).toBeCloseTo(invested - 221.3, 8);
   });
 
-  it('never reports investable cash inside the liquidity reserve', () => {
-    // $1,000 of cash against the default $10,000 reserve: nothing is investable.
-    const small = analyzePortfolio(twoAccountSnapshot({ schCash: 1000 }), DEFAULT_STRATEGY_CONFIG);
-    expect(small.totals.reservedCash).toBe(1000);
-    expect(small.totals.investableCash).toBe(0);
-
-    const large = analyzePortfolio(twoAccountSnapshot({ schCash: 12_500 }), DEFAULT_STRATEGY_CONFIG);
-    expect(large.totals.reservedCash).toBe(10_000);
-    expect(large.totals.investableCash).toBe(2_500);
+  it('keeps the household reserve out of brokerage cash entirely', () => {
+    // $1,000 of broker cash against the default $10,000 HOUSEHOLD target. The
+    // old model reserved the broker cash and reported $0 investable, which
+    // silently froze the strategy. The target lives outside the brokerages, so
+    // every dollar of eligible broker cash stays deployable.
+    const analysis = analyzePortfolio(twoAccountSnapshot({ schCash: 1_000 }), DEFAULT_STRATEGY_CONFIG);
+    expect(analysis.totals.brokerCash).toBe(1_000);
+    expect(analysis.totals.deployableBrokerCash).toBe(1_000);
+    expect(analysis.totals.brokerCashFloorHeld).toBe(0);
+    // …and the shortfall is still reported, loudly, as a household figure.
+    expect(analysis.totals.externalLiquidityTarget).toBe(10_000);
+    expect(analysis.totals.externalLiquidityCurrent).toBe(0);
+    expect(analysis.totals.externalLiquidityGap).toBe(10_000);
+    expect(analysis.totals.externalReserveUnderfunded).toBe(true);
   });
 
-  it('releases cash when the reserve is lowered, and clamps a negative reserve to zero', () => {
+  it('reports the reserve as funded once the household holds the target', () => {
+    const analysis = analyzePortfolio(twoAccountSnapshot({ schCash: 1_000 }), {
+      ...DEFAULT_STRATEGY_CONFIG,
+      externalLiquidityCurrent: 10_000,
+    });
+    expect(analysis.totals.externalLiquidityGap).toBe(0);
+    expect(analysis.totals.externalReserveUnderfunded).toBe(false);
+    expect(analysis.totals.deployableBrokerCash).toBe(1_000);
+  });
+
+  it('withholds only the settlement floor from brokerage cash, and clamps negatives', () => {
     const snapshot = twoAccountSnapshot({ schCash: 4_000 });
-    const lowered = analyzePortfolio(snapshot, { ...DEFAULT_STRATEGY_CONFIG, liquidityReserve: 1_000 });
-    expect(lowered.totals.investableCash).toBe(3_000);
-    const negative = analyzePortfolio(snapshot, { ...DEFAULT_STRATEGY_CONFIG, liquidityReserve: -5_000 });
-    expect(negative.totals.reservedCash).toBe(0);
-    expect(negative.totals.investableCash).toBe(4_000);
+    const floored = analyzePortfolio(snapshot, { ...DEFAULT_STRATEGY_CONFIG, brokerCashFloor: 250 });
+    expect(floored.totals.brokerCashFloorHeld).toBe(250);
+    expect(floored.totals.deployableBrokerCash).toBe(3_750);
+    // A floor larger than the cash on hand takes the cash, never more.
+    const oversized = analyzePortfolio(snapshot, { ...DEFAULT_STRATEGY_CONFIG, brokerCashFloor: 9_000 });
+    expect(oversized.totals.brokerCashFloorHeld).toBe(4_000);
+    expect(oversized.totals.deployableBrokerCash).toBe(0);
+    const negative = analyzePortfolio(snapshot, {
+      ...DEFAULT_STRATEGY_CONFIG,
+      brokerCashFloor: -500,
+      externalLiquidityTarget: -5_000,
+    });
+    expect(negative.totals.brokerCashFloorHeld).toBe(0);
+    expect(negative.totals.deployableBrokerCash).toBe(4_000);
+    expect(negative.totals.externalLiquidityTarget).toBe(0);
+    expect(negative.totals.externalReserveUnderfunded).toBe(false);
   });
 
   it('returns null P/L percent when there is no cost basis', () => {

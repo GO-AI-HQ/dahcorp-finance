@@ -6,6 +6,11 @@ import { Badge } from '../components/Badge.js';
 import { KeyValue } from '../components/KeyValue.js';
 import { ErrorState, LoadingBlock } from '../components/States.js';
 import { DISTRIBUTION_BASIS_LABELS, type StrategyConfig } from '../core/config.js';
+import {
+  CALCULATION_SCOPES,
+  CALCULATION_SCOPE_DESCRIPTIONS,
+  CALCULATION_SCOPE_LABELS,
+} from '../core/scope.js';
 import { formatMoney, formatPct } from '../core/format.js';
 import { SLEEVE_LABELS } from '../core/universe.js';
 
@@ -65,6 +70,24 @@ function PercentField({
     </div>
   );
 }
+
+const WHOLE_PORTFOLIO_RULES: { key: keyof StrategyConfig['wholePortfolioRules']; label: string; hint: string }[] = [
+  {
+    key: 'concentration',
+    label: 'Measure single-position concentration across the entire portfolio',
+    hint: 'Off: concentration is measured inside the taxable book, so a long-term Roth position cannot veto a taxable income buy.',
+  },
+  {
+    key: 'exposure',
+    label: 'Measure underlying-exposure overlap across the entire portfolio',
+    hint: 'Off: overlap between an income ETF and its underlying is measured inside the taxable book.',
+  },
+  {
+    key: 'sleeve',
+    label: 'Measure sleeve ceilings across the entire portfolio',
+    hint: 'Off: the leveraged sleeve ceiling is measured against taxable capital, which is the capital the strategy actually deploys.',
+  },
+];
 
 function MoneyField({
   id,
@@ -203,14 +226,30 @@ export function Settings() {
       ) : null}
 
       <div className="grid grid--2 section">
-        <Card label="Capital" title="Reserve & contributions">
+        <Card label="Capital" title="Liquidity & contributions">
           <MoneyField
-            id="reserve"
-            label={`Liquidity reserve — ${formatMoney(c.liquidityReserve, 0)}`}
-            hint="Cash below this level is never offered for allocation, by Claude or by the deterministic planner."
-            value={c.liquidityReserve}
+            id="externalLiquidityTarget"
+            label={`External liquidity target — ${formatMoney(c.externalLiquidityTarget, 0)}`}
+            hint="Household emergency cash held OUTSIDE Robinhood and Schwab. It is protected capital: neither Claude nor the deterministic planner may ever draw from it, and it does not require this much cash to sit idle in a brokerage."
+            value={c.externalLiquidityTarget}
             disabled={locked}
-            onCommit={(value) => void save({ liquidityReserve: value })}
+            onCommit={(value) => void save({ externalLiquidityTarget: value })}
+          />
+          <MoneyField
+            id="externalLiquidityCurrent"
+            label={`External liquidity held — ${formatMoney(c.externalLiquidityCurrent, 0)}`}
+            hint="What the household reserve currently holds. Below target the app warns, but contributions are still analysed and allocated."
+            value={c.externalLiquidityCurrent}
+            disabled={locked}
+            onCommit={(value) => void save({ externalLiquidityCurrent: value })}
+          />
+          <MoneyField
+            id="brokerCashFloor"
+            label={`Brokerage settlement floor — ${formatMoney(c.brokerCashFloor, 0)}`}
+            hint="Small buffer left inside the brokerages for fees and settlement. Everything above it is deployable brokerage cash."
+            value={c.brokerCashFloor}
+            disabled={locked}
+            onCommit={(value) => void save({ brokerCashFloor: value })}
           />
           <MoneyField
             id="contribution"
@@ -405,6 +444,50 @@ export function Settings() {
               Phase {c.executionPhase} — observer. Advancing this is a reviewed code change and a deploy, never a form
               submission.
             </KeyValue>
+          </div>
+        </Card>
+
+        <Card label="Scope" title="What each calculation measures">
+          <div className="chip-group" role="group" aria-label="Calculation scope">
+            {CALCULATION_SCOPES.map((scope) => (
+              <button
+                key={scope}
+                type="button"
+                className="chip"
+                aria-pressed={c.calculationScope === scope}
+                disabled={locked}
+                title={CALCULATION_SCOPE_DESCRIPTIONS[scope]}
+                onClick={() => void save({ calculationScope: scope })}
+              >
+                {CALCULATION_SCOPE_LABELS[scope]}
+              </button>
+            ))}
+          </div>
+          <p className="field__hint" style={{ marginTop: 'var(--space-3)' }}>
+            {CALCULATION_SCOPE_DESCRIPTIONS[c.calculationScope]}
+          </p>
+          <div className="stack stack--tight" style={{ marginTop: 'var(--space-4)' }}>
+            <KeyValue label="Whole-portfolio risk rules" hint="off by default">
+              A Roth or education holding does not block a taxable-income recommendation unless the matching rule below
+              is switched on.
+            </KeyValue>
+            {WHOLE_PORTFOLIO_RULES.map((rule) => (
+              <div className="field" key={rule.key}>
+                <label className="switch" htmlFor={`wpr-${rule.key}`}>
+                  <input
+                    id={`wpr-${rule.key}`}
+                    type="checkbox"
+                    checked={c.wholePortfolioRules[rule.key]}
+                    disabled={locked}
+                    onChange={(e) =>
+                      void save({ wholePortfolioRules: { ...c.wholePortfolioRules, [rule.key]: e.target.checked } })
+                    }
+                  />
+                  <span>{rule.label}</span>
+                </label>
+                <p className="field__hint">{rule.hint}</p>
+              </div>
+            ))}
           </div>
         </Card>
 

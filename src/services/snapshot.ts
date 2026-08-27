@@ -53,7 +53,8 @@ export function seedPositionSource(asOf: string): PositionSource {
     corporateActions: seed.corporateActions,
     notes: [
       'Positions are seeded MOCK fixtures, not brokerage data.',
-      'Seeded from the confirmed holdings: 11 YMAG (Schwab) and 7.90 NVDY (Robinhood).',
+      'CONFIRMED holdings: 11 YMAG (Schwab) and 7.90 NVDY (Robinhood). These are the only positions permitted to drive live decisions.',
+      'Every other seeded position is SIMULATED. It demonstrates the calculations but cannot activate a live strategy trigger until a brokerage adapter verifies ownership and cost basis.',
     ],
     containsMockData: true,
   };

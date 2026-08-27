@@ -56,6 +56,13 @@ export const holdings = pgTable(
     tacticalCostBasisTotal: doublePrecision('tactical_cost_basis_total'),
     sleeve: text().notNull().default('unclassified'),
     legacy: boolean().notNull().default(false),
+    /**
+     * CONFIRMED | SIMULATED | UNVERIFIED. Only CONFIRMED holdings may drive a
+     * live risk, concentration, harvest or allocation decision. Rows the
+     * investor enters are CONFIRMED by default; demonstration fixtures and
+     * anything awaiting a brokerage adapter are marked otherwise.
+     */
+    verification: text().notNull().default('CONFIRMED'),
     openedAt: text('opened_at'),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),

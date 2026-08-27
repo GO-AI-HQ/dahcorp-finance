@@ -8,6 +8,7 @@ import { Badge } from '../components/Badge.js';
 import { ProgressBar } from '../components/ProgressBar.js';
 import { KeyValue } from '../components/KeyValue.js';
 import { DataBanner } from '../components/DataBanner.js';
+import { ScopeSelector } from '../components/ScopeSelector.js';
 import { EmptyState, ErrorState, LoadingCards } from '../components/States.js';
 import { IncomeBarChart } from '../charts/IncomeBarChart.js';
 import { DistributionSparkline } from '../charts/DistributionSparkline.js';
@@ -63,27 +64,43 @@ export function IncomeEngine() {
 
       <DataBanner containsMockData={d.containsMockData} sourceNotes={d.sourceNotes} asOf={d.asOf} />
 
-      <Card label="Distribution basis" title="Modeling window" tight>
-        <div className="chip-group" role="group" aria-label="Distribution basis">
-          {BASES.map((basis) => (
-            <button
-              key={basis}
-              type="button"
-              className="chip"
-              aria-pressed={d.config.distributionBasis === basis}
-              disabled={saving}
-              onClick={() => void changeBasis(basis)}
-            >
-              {DISTRIBUTION_BASIS_LABELS[basis]}
-            </button>
-          ))}
-        </div>
-        <p className="meta" style={{ marginTop: 10 }}>
-          Every forward figure below is modeled on the {DISTRIBUTION_BASIS_LABELS[d.config.distributionBasis].toLowerCase()}{' '}
-          distribution, then shown again after a {formatPct(s.haircut, 0)} conservative haircut.
-          {saveNote ? ` ${saveNote}` : ''}
-        </p>
+      <Card label="Calculation scope" title="What the engine is measuring" tight>
+        <ScopeSelector scope={d.scope} options={d.scopeOptions} onChanged={() => setNonce((n) => n + 1)} />
+        {d.incomeExcluded.length ? (
+          <ul className="bullets" style={{ marginTop: 10 }}>
+            {d.incomeExcluded.map((e) => (
+              <li key={`${e.symbol}-${e.accountName}`}>
+                {e.symbol} in {e.accountName} ({formatMoney(e.marketValue, 0)}) — {e.reason}
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </Card>
+
+      <div className="section">
+        <Card label="Distribution basis" title="Modeling window" tight>
+          <div className="chip-group" role="group" aria-label="Distribution basis">
+            {BASES.map((basis) => (
+              <button
+                key={basis}
+                type="button"
+                className="chip"
+                aria-pressed={d.config.distributionBasis === basis}
+                disabled={saving}
+                onClick={() => void changeBasis(basis)}
+              >
+                {DISTRIBUTION_BASIS_LABELS[basis]}
+              </button>
+            ))}
+          </div>
+          <p className="meta" style={{ marginTop: 10 }}>
+            Every forward figure below is modeled on the{' '}
+            {DISTRIBUTION_BASIS_LABELS[d.config.distributionBasis].toLowerCase()} distribution, then shown again after a{' '}
+            {formatPct(s.haircut, 0)} conservative haircut.
+            {saveNote ? ` ${saveNote}` : ''}
+          </p>
+        </Card>
+      </div>
 
       <div className="grid grid--4 section">
         <StatCard

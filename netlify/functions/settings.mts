@@ -4,6 +4,7 @@ import { loadStrategyConfig, recordAudit, saveStrategyConfig } from '../lib/stor
 import { DEFAULT_STRATEGY_CONFIG, MILESTONES, STRATEGY_LEVELS } from '../../src/core/config.js';
 import type { StrategyConfig } from '../../src/core/config.js';
 import { databaseAvailable } from '../lib/store.mts';
+import { parseCalculationScope } from '../../src/core/scope.js';
 
 /**
  * GET  /.netlify/functions/settings — read the strategy configuration.
@@ -17,7 +18,9 @@ import { databaseAvailable } from '../lib/store.mts';
 
 /** Numeric fields, with the bounds each is allowed to take. */
 const NUMERIC_BOUNDS: Partial<Record<keyof StrategyConfig, [number, number]>> = {
-  liquidityReserve: [0, 10_000_000],
+  externalLiquidityTarget: [0, 10_000_000],
+  externalLiquidityCurrent: [0, 10_000_000],
+  brokerCashFloor: [0, 100_000],
   conservativeHaircut: [0, 0.9],
   dripRate: [0, 1],
   monthlyContribution: [0, 1_000_000],
@@ -43,6 +46,39 @@ function sanitise(input: Record<string, unknown>): { patch: Partial<StrategyConf
       continue;
     }
     (patch as Record<string, unknown>)[key] = value;
+  }
+
+  // The calculation scope decides which accounts and sleeves every downstream
+  // figure is measured against, so it is validated against the closed set.
+  if (input.calculationScope !== undefined) {
+    const scope = parseCalculationScope(input.calculationScope);
+    if (scope) patch.calculationScope = scope;
+    else rejected.push('calculationScope must be TAXABLE_INCOME_ENGINE, ALL_TAXABLE or ENTIRE_PORTFOLIO.');
+  }
+
+  if (input.wholePortfolioRules !== undefined) {
+    const raw = input.wholePortfolioRules;
+    if (typeof raw === 'object' && raw !== null && !Array.isArray(raw)) {
+      const r = raw as Record<string, unknown>;
+      const rules: Partial<StrategyConfig['wholePortfolioRules']> = {};
+      for (const key of ['concentration', 'exposure', 'sleeve'] as const) {
+        const value = r[key];
+        if (value === undefined) continue;
+        if (typeof value === 'boolean') rules[key] = value;
+        else rejected.push(`wholePortfolioRules.${key} must be a boolean.`);
+      }
+      if (Object.keys(rules).length) {
+        patch.wholePortfolioRules = { ...DEFAULT_STRATEGY_CONFIG.wholePortfolioRules, ...rules };
+      }
+    } else {
+      rejected.push('wholePortfolioRules must be an object of rule → boolean.');
+    }
+  }
+
+  if (input.liquidityReserve !== undefined) {
+    rejected.push(
+      'liquidityReserve has been replaced by externalLiquidityTarget (the household reserve held outside the brokerages) and brokerCashFloor (the settlement buffer inside them).',
+    );
   }
 
   if (input.distributionBasis !== undefined) {
