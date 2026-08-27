@@ -1,0 +1,53 @@
+/*
+ * DAHCorp Finance design tokens.
+ *
+ * Restrained, near-black, institutional. Gold marks milestones and primary
+ * actions; ice blue carries information; green and red are reserved for
+ * performance and risk. Status is never communicated by colour alone — every
+ * coloured state also carries a label, an icon glyph or a text cue.
+ */
+:root {
+  --bg: #030507;
+  --bg2: #080b10;
+  --ink: rgba(255, 255, 255, 0.94);
+  --muted: rgba(255, 255, 255, 0.68);
+  --soft: rgba(255, 255, 255, 0.48);
+  --line: rgba(255, 255, 255, 0.11);
+  --card: rgba(255, 255, 255, 0.045);
+  --card2: rgba(255, 255, 255, 0.075);
+  --gold: #d4af37;
+  --gold2: #f1cf69;
+  --ice: #9ad7ff;
+  --danger: #8c1d18;
+  --max: 1180px;
+  --radius: 24px;
+
+  /* Extensions, derived from the palette above rather than added to it. */
+  --radius-sm: 14px;
+  --radius-xs: 10px;
+  --positive: #4bbf8a;
+  --negative: #e0665e;
+  --warning: #e0a83c;
+  --intel: #b9a6f2;
+  --gold-dim: rgba(212, 175, 55, 0.16);
+  --ice-dim: rgba(154, 215, 255, 0.14);
+  --intel-dim: rgba(185, 166, 242, 0.14);
+  --positive-dim: rgba(75, 191, 138, 0.14);
+  --negative-dim: rgba(224, 102, 94, 0.14);
+  --danger-dim: rgba(140, 29, 24, 0.28);
+  --warning-dim: rgba(224, 168, 60, 0.14);
+
+  --font: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --shadow: 0 24px 60px -32px rgba(0, 0, 0, 0.9);
+  --nav-height: 60px;
+}
