@@ -151,30 +151,63 @@ describe('a compliant order', () => {
   });
 });
 
-describe('liquidity reserve', () => {
-  it('refuses to spend reserved capital', () => {
-    // $10,000 of cash against the $10,000 reserve: nothing is investable.
-    const decision = validateOrders([makeOrder({ notional: 500 })], context({ cash: 10_000 }));
-    expect(decision.approved).toBe(false);
-    const batch = decision.findings.find((f) => f.code === 'INSUFFICIENT_INVESTABLE_CASH')!;
-    expect(batch.severity).toBe('block');
-    expect(batch.message).toContain('liquidity reserve');
-    expect(decision.orders[0].findings.some((f) => f.code === 'NO_INVESTABLE_CASH')).toBe(true);
-    expect(decision.orders[0].allowedNotional).toBe(0);
-  });
-
-  it('warns when total cash has fallen below the reserve', () => {
-    const decision = validateOrders([makeOrder({ notional: 100 })], context({ cash: 5_000 }));
-    expect(decision.findings.some((f) => f.code === 'RESERVE_UNDERFUNDED' && f.severity === 'warning')).toBe(true);
-  });
-
-  it('releases capital when the reserve is reconfigured downward', () => {
-    const decision = validateOrders(
-      [makeOrder({ notional: 500 })],
-      context({ cash: 10_000, config: { ...DEFAULT_STRATEGY_CONFIG, liquidityReserve: 1_000 } }),
-    );
+describe('household liquidity vs brokerage cash', () => {
+  it('approves a contribution while the household reserve is underfunded, and says so', () => {
+    // The household target is $10,000 and the household holds nothing. Under
+    // the old conflated reserve this order was blocked outright, because the
+    // reserve was measured against brokerage cash.
+    const decision = validateOrders([makeOrder({ notional: 500 })], context({ cash: 20_000 }));
     expect(decision.approved).toBe(true);
     expect(decision.orders[0].allowedNotional).toBe(500);
+    const warning = decision.findings.find((f) => f.code === 'EXTERNAL_RESERVE_UNDERFUNDED')!;
+    expect(warning.severity).toBe('warning');
+    expect(warning.message).toContain('external reserve target');
+    expect(decision.findings.some((f) => f.severity === 'block')).toBe(false);
+  });
+
+  it('stops warning once the household reserve is funded', () => {
+    const decision = validateOrders(
+      [makeOrder({ notional: 500 })],
+      context({ cash: 20_000, config: { ...DEFAULT_STRATEGY_CONFIG, externalLiquidityCurrent: 10_000 } }),
+    );
+    expect(decision.findings.some((f) => f.code === 'EXTERNAL_RESERVE_UNDERFUNDED')).toBe(false);
+    expect(decision.approved).toBe(true);
+  });
+
+  it('blocks any order that names the protected external reserve as its funding source', () => {
+    const decision = validateOrders(
+      [makeOrder({ notional: 500, fundingSource: 'external_reserve' })],
+      context({ cash: 20_000 }),
+    );
+    const finding = decision.findings.find((f) => f.code === 'EXTERNAL_RESERVE_DRAW')!;
+    expect(finding.severity).toBe('block');
+    expect(finding.message).toContain('never be drawn down');
+    expect(decision.approved).toBe(false);
+  });
+
+  it('withholds only the settlement floor from deployable brokerage cash', () => {
+    const decision = validateOrders(
+      [makeOrder({ notional: 1_000 })],
+      context({ cash: 20_000, config: { ...DEFAULT_STRATEGY_CONFIG, brokerCashFloor: 19_500 } }),
+    );
+    // $20,000 cash less the $19,500 floor leaves $500, so the order is trimmed
+    // rather than rejected.
+    expect(decision.orders[0].allowedNotional).toBe(500);
+    expect(decision.orders[0].findings.some((f) => f.code === 'CASH_LIMIT_REDUCED')).toBe(true);
+    expect(decision.findings.some((f) => f.code === 'INSUFFICIENT_INVESTABLE_CASH')).toBe(true);
+  });
+
+  it('blocks when the settlement floor leaves nothing deployable', () => {
+    const decision = validateOrders(
+      [makeOrder({ notional: 500 })],
+      context({ cash: 20_000, config: { ...DEFAULT_STRATEGY_CONFIG, brokerCashFloor: 25_000 } }),
+    );
+    const order = decision.orders[0];
+    expect(order.allowedNotional).toBe(0);
+    const finding = order.findings.find((f) => f.code === 'NO_INVESTABLE_CASH')!;
+    expect(finding.severity).toBe('block');
+    // The reserve is never offered as the way out.
+    expect(finding.message).toContain('external reserve is not an available funding source');
   });
 
   it('reduces later orders in a batch as earlier ones consume cash', () => {
@@ -183,10 +216,11 @@ describe('liquidity reserve', () => {
         makeOrder({ id: 'a', symbol: 'QQQI', notional: 6_000, sleeve: 'income_engine' }),
         makeOrder({ id: 'b', symbol: 'SPYI', notional: 6_000, sleeve: 'income_engine' }),
       ],
-      context({ cash: 20_000, config: BIG_ORDERS }),
+      context({ cash: 20_000, config: { ...BIG_ORDERS, brokerCashFloor: 10_000 } }),
     );
-    // $10,000 investable: the first order takes $6,000, the second is cut to
-    // the $4,000 that remains, and the batch is blocked for over-requesting.
+    // $10,000 deployable after the settlement floor: the first order takes
+    // $6,000, the second is cut to the $4,000 that remains, and the batch is
+    // blocked for over-requesting.
     expect(decision.orders[0].allowedNotional).toBe(6_000);
     expect(decision.orders[1].allowedNotional).toBe(4_000);
     expect(decision.orders[1].findings.some((f) => f.code === 'CASH_LIMIT_REDUCED')).toBe(true);

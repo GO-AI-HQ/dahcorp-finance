@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { StrategyConfigPatch } from '../src/core/config.js';
 import {
   DEFAULT_STRATEGY_CONFIG,
   MILESTONES,
@@ -10,17 +11,44 @@ import {
 
 /**
  * The strategy config is the only place policy lives. These tests pin the
- * behaviours the plan calls non-negotiable: the reserve and the 50/50 income
- * split are editable defaults, and a partial patch can never widen the
+ * behaviours the plan calls non-negotiable: the liquidity target and the 50/50
+ * income split are editable defaults, and a partial patch can never widen the
  * execution phase or clear the kill switch.
  */
 describe('defaults', () => {
-  it('reserves $10,000 of liquidity by default and keeps it configurable', () => {
-    expect(DEFAULT_STRATEGY_CONFIG.liquidityReserve).toBe(10_000);
-    const raised = mergeStrategyConfig(DEFAULT_STRATEGY_CONFIG, { liquidityReserve: 25_000 });
-    expect(raised.liquidityReserve).toBe(25_000);
-    const cleared = mergeStrategyConfig(DEFAULT_STRATEGY_CONFIG, { liquidityReserve: 0 });
-    expect(cleared.liquidityReserve).toBe(0);
+  it('targets $10,000 of HOUSEHOLD liquidity, held outside the brokerages', () => {
+    expect(DEFAULT_STRATEGY_CONFIG.externalLiquidityTarget).toBe(10_000);
+    expect(DEFAULT_STRATEGY_CONFIG.externalLiquidityCurrent).toBe(0);
+    // The brokerages hold only a settlement buffer, which defaults to nothing.
+    expect(DEFAULT_STRATEGY_CONFIG.brokerCashFloor).toBe(0);
+    const raised = mergeStrategyConfig(DEFAULT_STRATEGY_CONFIG, { externalLiquidityTarget: 25_000 });
+    expect(raised.externalLiquidityTarget).toBe(25_000);
+    const cleared = mergeStrategyConfig(DEFAULT_STRATEGY_CONFIG, { externalLiquidityTarget: 0 });
+    expect(cleared.externalLiquidityTarget).toBe(0);
+  });
+
+  it('migrates a pre-1.1 liquidityReserve into the external liquidity target', () => {
+    const migrated = mergeStrategyConfig(DEFAULT_STRATEGY_CONFIG, {
+      liquidityReserve: 12_000,
+    } as StrategyConfigPatch);
+    expect(migrated.externalLiquidityTarget).toBe(12_000);
+    // The old field conflated household savings with broker cash. The broker
+    // side of the split does not inherit it.
+    expect(migrated.brokerCashFloor).toBe(0);
+  });
+
+  it('defaults the calculation scope to the taxable income engine', () => {
+    expect(DEFAULT_STRATEGY_CONFIG.calculationScope).toBe('TAXABLE_INCOME_ENGINE');
+    expect(DEFAULT_STRATEGY_CONFIG.wholePortfolioRules).toEqual({
+      concentration: false,
+      exposure: false,
+      sleeve: false,
+    });
+    const widened = mergeStrategyConfig(DEFAULT_STRATEGY_CONFIG, { calculationScope: 'ENTIRE_PORTFOLIO' });
+    expect(widened.calculationScope).toBe('ENTIRE_PORTFOLIO');
+    // Rules merge per key rather than replacing the whole object.
+    const oneRule = mergeStrategyConfig(DEFAULT_STRATEGY_CONFIG, { wholePortfolioRules: { concentration: true } });
+    expect(oneRule.wholePortfolioRules).toEqual({ concentration: true, exposure: false, sleeve: false });
   });
 
   it('treats the 50/50 income split as an opening position, not a hard-coded rule', () => {

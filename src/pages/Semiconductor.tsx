@@ -113,8 +113,16 @@ export function Semiconductor() {
                       <Badge tone={h.enabled ? 'ice' : 'neutral'} glyph={h.enabled ? 'i' : '—'}>
                         {h.enabled ? 'Rule enabled' : 'Rule disabled'}
                       </Badge>
-                      <Badge tone={h.armed ? 'gold' : 'neutral'} glyph={h.armed ? '◆' : '·'}>
-                        {h.armed ? 'Armed' : 'Not armed'}
+                      <Badge
+                        tone={h.armedLive ? 'gold' : h.armed ? 'warning' : 'neutral'}
+                        glyph={h.armedLive ? '◆' : h.armed ? '▲' : '·'}
+                        title={
+                          h.armed && !h.armedLive
+                            ? `The price condition is met, but the position is ${h.verification}. The rule cannot fire until a brokerage adapter verifies ownership and cost basis.`
+                            : undefined
+                        }
+                      >
+                        {h.armedLive ? 'Armed' : h.armed ? `${h.verification} — armed` : 'Not armed'}
                       </Badge>
                     </div>
                   </div>
@@ -122,7 +130,7 @@ export function Semiconductor() {
                     label={`Gain from tactical basis toward the +${formatPct(h.triggerGainPct, 0)} trigger`}
                     value={h.progressToTrigger ?? 0}
                     valueLabel={h.gainPct == null ? '—' : formatSignedPct(h.gainPct, 1)}
-                    tone={h.armed ? 'gold' : 'ice'}
+                    tone={h.armedLive ? 'gold' : 'ice'}
                     caption={
                       h.triggerPrice != null
                         ? `Trigger price ${formatMoney(h.triggerPrice)} · current ${formatMoney(h.price)} · basis ${formatMoney(h.tacticalCostBasisPerShare)}/share`
@@ -145,14 +153,19 @@ export function Semiconductor() {
         <Card label="Flywheel" title="Tactical gains → permanent core">
           <div className="flywheel">
             {engine.flywheel.map((leg) => (
-              <div key={`${leg.from}-${leg.to}`} className={`flywheel__leg ${leg.armed ? 'flywheel__leg--armed' : ''}`}>
+              <div
+                key={`${leg.from}-${leg.to}`}
+                className={`flywheel__leg ${leg.armedLive ? 'flywheel__leg--armed' : ''}`}
+              >
                 <span className="flywheel__node">{leg.from}</span>
                 <span className="flywheel__arrow" aria-hidden="true" />
                 <span className="flywheel__node">{leg.to}</span>
                 <p className="meta" style={{ gridColumn: '1 / -1', margin: 0 }}>
-                  {leg.armed
+                  {leg.armedLive
                     ? `Armed — ${formatMoney(leg.proceeds)} would move from ${leg.from} into ${leg.to}.`
-                    : `Not armed. No proceeds would move from ${leg.from} today.`}
+                    : leg.armed
+                      ? `${leg.verification} — the price condition is met, but this leg cannot fire until the position is verified.`
+                      : `Not armed. No proceeds would move from ${leg.from} today.`}
                 </p>
               </div>
             ))}

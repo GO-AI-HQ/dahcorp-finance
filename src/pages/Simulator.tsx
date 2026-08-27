@@ -7,6 +7,7 @@ import { StatCard } from '../components/StatCard.js';
 import { Badge } from '../components/Badge.js';
 import { KeyValue } from '../components/KeyValue.js';
 import { DataBanner } from '../components/DataBanner.js';
+import { ScopeSelector } from '../components/ScopeSelector.js';
 import { ErrorState, LoadingBlock } from '../components/States.js';
 import { ProjectionChart, type ProjectionSeries } from '../charts/ProjectionChart.js';
 import { CHART } from '../charts/theme.js';
@@ -32,6 +33,9 @@ export function Simulator() {
   const [result, setResult] = useState<SimulationResponse | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState(false);
+  // Bumped when the calculation scope changes, so the projection re-solves
+  // against the newly selected capital base.
+  const [scopeNonce, setScopeNonce] = useState(0);
 
   // Seed the sliders from the stored policy, so the simulator opens on the
   // investor's real plan rather than on invented defaults.
@@ -74,7 +78,7 @@ export function Simulator() {
         .finally(() => setBusy(false));
     }, 260);
     return () => window.clearTimeout(handle);
-  }, [inputs]);
+  }, [inputs, scopeNonce]);
 
   const series = useMemo<ProjectionSeries[]>(
     () =>
@@ -102,6 +106,10 @@ export function Simulator() {
       />
 
       <DataBanner containsMockData={result.containsMockData} sourceNotes={result.sourceNotes} asOf={result.asOf} />
+
+      <Card label="Calculation scope" title="Capital base for every scenario" tight>
+        <ScopeSelector scope={result.scope} options={result.scopeOptions} onChanged={() => setScopeNonce((n) => n + 1)} />
+      </Card>
 
       <div className="grid grid--wide-left section">
         <Card label="Projection" title="Modeled forward monthly income">

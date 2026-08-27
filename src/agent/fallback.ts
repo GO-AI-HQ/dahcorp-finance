@@ -46,7 +46,7 @@ export function buildDeterministicBrief(args: {
       `Leveraged sleeve is at ${(analysis.leveragedPct * 100).toFixed(1)}% against a ${(config.maxLeveragedSleevePct * 100).toFixed(0)}% ceiling.`,
     );
   }
-  const armedHarvest = semis.tactical.filter((t) => t.harvest.armed);
+  const armedHarvest = semis.tactical.filter((t) => t.harvest.armedLive);
   if (armedHarvest.length) {
     risks.push(`Harvest rule armed on ${armedHarvest.map((t) => t.symbol).join(', ')} — review before adding leverage.`);
   }

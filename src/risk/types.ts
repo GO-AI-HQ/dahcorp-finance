@@ -20,6 +20,12 @@ export interface ProposedOrder {
   rationale: string;
   /** Which engine produced it. */
   origin: 'claude' | 'harvest_rule' | 'dip_rule' | 'rebalance' | 'manual';
+  /**
+   * Where the money is coming from. `external_reserve` is always rejected —
+   * the household reserve is protected capital and neither Claude nor the
+   * deterministic policy engine may ever recommend drawing it down.
+   */
+  fundingSource?: 'broker_cash' | 'new_contribution' | 'sale_proceeds' | 'external_reserve';
   sleeve: Sleeve;
 }
 

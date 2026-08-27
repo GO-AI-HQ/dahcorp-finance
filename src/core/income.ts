@@ -15,6 +15,13 @@ import {
 } from './distributions.js';
 import { computeSelfBuy, computeSelfFundingMilestone, type SelfBuyResult, type SelfFundingMilestone } from './selfBuy.js';
 import type { PortfolioAnalysis, PositionView } from './portfolio.js';
+import type { AccountType, CalculationScope, VerificationStatus } from './types.js';
+import {
+  accountInScope,
+  CALCULATION_SCOPE_LABELS,
+  incomePositionInScope,
+} from './scope.js';
+import { getInstrumentOrFallback } from './universe.js';
 
 /** Per-position income analytics for the Income Engine view. */
 export interface IncomePositionView {
@@ -43,12 +50,19 @@ export interface IncomePositionView {
   navChange26w: number | null;
   totalReturn52w: number | null;
   selfBuy: SelfBuyResult;
+  accountType: AccountType;
+  /** SIMULATED / UNVERIFIED positions are shown but never drive a decision. */
+  verification: VerificationStatus;
+  verified: boolean;
   /** Warnings that must be shown alongside the income figures. */
   flags: string[];
 }
 
 export interface IncomeSummary {
   asOf: string;
+  /** The slice of capital every figure below is measured over. */
+  scope: CalculationScope;
+  scopeLabel: string;
   basis: DistributionBasis;
   haircut: number;
   /** Cash actually received — audited, not modeled. */
@@ -68,6 +82,17 @@ export interface IncomeSummary {
   blendedDistributionRate: number | null;
   blendedConservativeRate: number | null;
   positions: IncomePositionView[];
+  /** Income-producing positions left out by the active scope, with reasons. */
+  excluded: {
+    symbol: string;
+    accountName: string;
+    accountType: AccountType;
+    marketValue: number;
+    reason: string;
+  }[];
+  /** Capital inside the scope that is not yet brokerage-verified. */
+  simulatedCapital: number;
+  containsSimulated: boolean;
   selfFundingMilestone: SelfFundingMilestone;
   /** Estimated ROC-adjusted income: the part that is not the investor's own money. */
   estimatedEconomicIncomeMonthly: number | null;
@@ -89,7 +114,15 @@ function positionFlags(view: {
   return flags;
 }
 
-/** Income-producing positions are those whose sleeve pays cash by design. */
+/**
+ * Income-producing positions are those whose sleeve pays cash by design.
+ *
+ * Scope-blind, and kept for callers that want the whole-portfolio notion. The
+ * income summary uses `incomePositionInScope` instead, because a REIT sleeve
+ * held in a Roth IRA pays a fraction of the engine's rate and would otherwise
+ * drag the blended distribution rate — and therefore inflate the capital
+ * required to reach the taxable $500/month objective.
+ */
 export function isIncomeProducing(position: PositionView): boolean {
   return position.sleeve === 'income_engine' || position.sleeve === 'reit_dividend';
 }
@@ -98,11 +131,27 @@ export function buildIncomeSummary(
   snapshot: PortfolioSnapshot,
   analysis: PortfolioAnalysis,
   config: StrategyConfig,
+  /** Overrides the configured scope — used by derived per-scope views. */
+  scopeOverride?: CalculationScope,
 ): IncomeSummary {
   const asOf = snapshot.asOf;
   const basis = config.distributionBasis;
+  const scope = scopeOverride ?? config.calculationScope;
 
-  const incomePositions = analysis.positions.filter(isIncomeProducing);
+  const incomeCandidates = analysis.positions.filter(isIncomeProducing);
+  const incomePositions = incomeCandidates.filter((p) => incomePositionInScope(p, scope));
+  const excluded = incomeCandidates
+    .filter((p) => !incomePositionInScope(p, scope))
+    .map((p) => ({
+      symbol: p.symbol,
+      accountName: p.account.name,
+      accountType: p.accountType,
+      marketValue: p.marketValue,
+      reason:
+        p.accountType === 'taxable'
+          ? `${p.sleeve.replace(/_/g, ' ')} sleeve is outside the ${CALCULATION_SCOPE_LABELS[scope]} scope.`
+          : `${p.account.name} is outside the ${CALCULATION_SCOPE_LABELS[scope]} scope.`,
+    }));
 
   const positions: IncomePositionView[] = incomePositions.map((p) => {
     const stats = computeDistributionStats(p.symbol, snapshot.distributions, asOf);
@@ -138,12 +187,26 @@ export function buildIncomeSummary(
       navChange26w,
       totalReturn52w: tr?.totalReturn ?? null,
       selfBuy,
+      accountType: p.accountType,
+      verification: p.verification,
+      verified: p.verified,
       flags: positionFlags({ stats, navChange26w, totalReturn52w: tr?.totalReturn ?? null }),
     };
   });
 
+  // Received cash is scoped the same way as modeled income: a Roth dividend is
+  // real money, but it is not income the taxable engine produced.
+  const scopedAccountIds = new Set(
+    snapshot.accounts.filter((a) => accountInScope(a, scope)).map((a) => a.id),
+  );
+  const eventInScope = (accountId: string, symbol: string) => {
+    if (!scopedAccountIds.has(accountId)) return false;
+    const sleeve = getInstrumentOrFallback(symbol).sleeve;
+    return incomePositionInScope({ accountType: 'taxable', sleeve }, scope);
+  };
+  const scopedIncomeEvents = snapshot.incomeEvents.filter((e) => eventInScope(e.accountId, e.symbol));
   const received = (days: number) =>
-    sum(snapshot.incomeEvents.filter((e) => withinTrailingDays(e.payDate, asOf, days)).map((e) => e.grossAmount));
+    sum(scopedIncomeEvents.filter((e) => withinTrailingDays(e.payDate, asOf, days)).map((e) => e.grossAmount));
 
   const forwardWeeklyIncome = sum(positions.map((p) => p.weeklyIncome));
   const forwardMonthlyIncome = sum(positions.map((p) => p.monthlyIncome));
@@ -164,8 +227,21 @@ export function buildIncomeSummary(
     .filter((p) => Object.keys(config.incomeAllocationTargets).includes(p.symbol) || p.stats.frequency === 'weekly')
     .map((p) => ({ symbol: p.symbol, shares: p.shares, price: p.price, selfBuy: p.selfBuy }));
 
+  const simulatedCapital = sum(positions.filter((p) => !p.verified).map((p) => p.marketValue));
+  const containsSimulated = simulatedCapital > 0;
+
   const flags: string[] = [];
   if (snapshot.containsMockData) flags.push('Snapshot contains mock fixture data.');
+  if (containsSimulated) {
+    flags.push(
+      'Some in-scope capital is SIMULATED and cannot drive live decisions until a brokerage adapter verifies it.',
+    );
+  }
+  if (excluded.length) {
+    flags.push(
+      `${excluded.length} income-producing position${excluded.length === 1 ? '' : 's'} excluded by the ${CALCULATION_SCOPE_LABELS[scope]} scope: ${excluded.map((e) => e.symbol).join(', ')}.`,
+    );
+  }
   if (positions.some((p) => p.stats.thinHistory)) flags.push('At least one position has thin distribution history.');
   if (estimatedEconomicIncomeMonthly != null && estimatedEconomicIncomeMonthly < forwardMonthlyIncome * 0.6) {
     flags.push('A large share of modeled income is estimated return of capital, not economic income.');
@@ -173,12 +249,14 @@ export function buildIncomeSummary(
 
   return {
     asOf,
+    scope,
+    scopeLabel: CALCULATION_SCOPE_LABELS[scope],
     basis,
     haircut: config.conservativeHaircut,
     received7d: received(7),
     received30d: received(30),
     received90d: received(90),
-    receivedLifetime: sum(snapshot.incomeEvents.map((e) => e.grossAmount)),
+    receivedLifetime: sum(scopedIncomeEvents.map((e) => e.grossAmount)),
     forwardWeeklyIncome,
     forwardMonthlyIncome,
     forwardAnnualIncome,
@@ -189,6 +267,9 @@ export function buildIncomeSummary(
       ? applyHaircut(blendedDistributionRate, config.conservativeHaircut)
       : null,
     positions,
+    excluded,
+    simulatedCapital,
+    containsSimulated,
     selfFundingMilestone: computeSelfFundingMilestone(milestonePositions),
     estimatedEconomicIncomeMonthly,
     flags,

@@ -35,7 +35,8 @@ export default withErrorHandling('analyze', async (req: Request) => {
   const signals = buildSignalsPayload(ctx);
 
   // Capital is bounded by the deterministic policy, not by the request. A caller
-  // cannot ask the agent to consider money the reserve has claimed.
+  // cannot ask the agent to consider more than the brokerages can actually
+  // deploy, and the protected household reserve is never part of that figure.
   const policyCapital = investableCapital(ctx);
   const requested = typeof body?.capital === 'number' && Number.isFinite(body.capital) ? body.capital : policyCapital;
   const capital = Math.max(0, Math.min(requested, policyCapital));

@@ -56,7 +56,7 @@ function RiskVerdict({ decision }: { decision: RiskDecision }) {
           {decision.approved ? 'Approved by policy' : 'Rejected by policy'}
         </Badge>
       }
-      hint="Claude cannot bypass this engine. Every recommendation is validated against cash, reserves, position and sleeve limits, leverage ceilings and order size before it can even be previewed."
+      hint="Claude cannot bypass this engine. Every recommendation is validated against deployable cash, position and sleeve limits, leverage ceilings, holding verification and order size before it can even be previewed."
     >
       <div className="grid grid--2" style={{ gap: 'var(--space-2)' }}>
         <KeyValue label="Requested">{formatMoney(decision.requestedTotal, 0)}</KeyValue>
@@ -308,12 +308,13 @@ export function ClaudeConsole() {
             min={0}
             step={25}
             value={capital}
-            placeholder="Defaults to investable cash above the reserve"
+            placeholder="Defaults to deployable brokerage cash"
             onChange={(e) => setCapital(e.target.value)}
             disabled={busy}
           />
           <p className="field__hint">
-            Bounded server-side by investable cash. Capital inside the liquidity reserve is never offered for allocation.
+            Bounded server-side by deployable brokerage cash. The protected external household reserve is held outside the
+            brokerages and is never offered for allocation.
           </p>
         </div>
         <div className="row">

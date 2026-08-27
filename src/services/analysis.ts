@@ -22,6 +22,12 @@ import { buildAllocationPlan, diagnoseDrag, rankOpportunities } from '../strateg
 import { buildScenarios, projectIncome, solveMonthlyContribution } from '../core/projection.js';
 import { INCOME_UNIVERSE, LEVERAGED_SYMBOLS, WATCHLISTS } from '../core/universe.js';
 import { applyHaircut } from '../core/distributions.js';
+import {
+  CALCULATION_SCOPES,
+  CALCULATION_SCOPE_DESCRIPTIONS,
+  CALCULATION_SCOPE_LABELS,
+  riskScopeFor,
+} from '../core/scope.js';
 
 export interface AnalysisContext {
   snapshot: PortfolioSnapshot;
@@ -34,6 +40,39 @@ export function buildAnalysisContext(snapshot: PortfolioSnapshot, config: Strate
   const analysis = analyzePortfolio(snapshot, config);
   const income = buildIncomeSummary(snapshot, analysis, config);
   return { snapshot, config, analysis, income };
+}
+
+/**
+ * The scope selector the UI renders, and the arithmetic each option produces.
+ * Every figure in a payload is expressed in `scope`; `scopeOptions` lets the
+ * selector show what switching would change without a second request.
+ */
+export function scopeBlock(ctx: AnalysisContext) {
+  const { analysis, income } = ctx;
+  return {
+    scope: analysis.scope,
+    scopeLabel: CALCULATION_SCOPE_LABELS[analysis.scope],
+    scopeDescription: CALCULATION_SCOPE_DESCRIPTIONS[analysis.scope],
+    scopeOptions: CALCULATION_SCOPES.map((scope) => {
+      const view = analysis.scopes[scope];
+      return {
+        scope,
+        label: CALCULATION_SCOPE_LABELS[scope],
+        description: CALCULATION_SCOPE_DESCRIPTIONS[scope],
+        investedValue: view.investedValue,
+        totalValue: view.totalValue,
+        incomeEngineCapital: view.incomeEngineCapital,
+        positionCount: view.positions.length,
+        accountCount: view.accountIds.length,
+        containsSimulated: view.containsSimulated,
+      };
+    }),
+    excluded: analysis.scoped.excluded,
+    incomeExcluded: income.excluded,
+    confirmedValue: analysis.scoped.confirmedValue,
+    simulatedValue: analysis.scoped.simulatedValue,
+    containsSimulated: analysis.scoped.containsSimulated,
+  };
 }
 
 /** Metadata every response carries so the UI can never mislabel its source. */
@@ -49,17 +88,30 @@ export function provenance(snapshot: PortfolioSnapshot) {
 export function buildPortfolioPayload(ctx: AnalysisContext, priorMonthlyIncome: number | null) {
   const { snapshot, config, analysis, income } = ctx;
   const milestone = activeMilestone(config);
+  const exposureScope = riskScopeFor('exposure', 'taxable', config.wholePortfolioRules);
   const velocity = computeIncomeVelocity({ income, config, priorMonthlyIncome, priorPeriodMonths: 1 });
   const level = strategyLevelFor(income.forwardMonthlyIncome);
   const progress = milestoneProgress(income, config);
 
   return {
     ...provenance(snapshot),
+    ...scopeBlock(ctx),
     config,
     strategyLevel: level,
     milestone,
     milestones: progress,
     totals: analysis.totals,
+    scopedTotals: {
+      investedValue: analysis.scoped.investedValue,
+      brokerCash: analysis.scoped.brokerCash,
+      deployableBrokerCash: analysis.scoped.deployableBrokerCash,
+      totalValue: analysis.scoped.totalValue,
+      costBasis: analysis.scoped.costBasis,
+      unrealizedPL: analysis.scoped.unrealizedPL,
+      unrealizedPLPct: analysis.scoped.unrealizedPLPct,
+      incomeEngineCapital: analysis.scoped.incomeEngineCapital,
+      incomeEnginePct: analysis.scoped.incomeEnginePct,
+    },
     accounts: analysis.accounts,
     positions: analysis.positions.map((p) => ({
       symbol: p.symbol,
@@ -80,17 +132,33 @@ export function buildPortfolioPayload(ctx: AnalysisContext, priorMonthlyIncome: 
       unrealizedPLPct: p.unrealizedPLPct,
       dayChangePct: p.dayChangePct,
       weight: p.weight,
+      scopeWeight: analysis.scoped.weights[p.holding.id] ?? null,
+      inScope: analysis.scoped.weights[p.holding.id] != null,
       legacy: p.legacy,
+      accountType: p.accountType,
+      verification: p.verification,
+      verified: p.verified,
       allocationEligible: p.account.allocationEligible,
     })),
+    // The Portfolio page is a whole-household inventory, so these stay
+    // unscoped; `scopedSleeves` / `scopedExposures` carry the scope-relative
+    // view for the risk and income surfaces.
     sleeves: analysis.sleeves,
     exposures: analysis.exposures,
+    scopedSleeves: analysis.scoped.sleeves,
+    scopedExposures: analysis.scoped.exposures,
+    // The scope the exposure ceiling is actually enforced in, plus the weights
+    // measured there, so the UI badge and the risk engine cannot disagree.
+    exposureScope,
+    riskExposures: analysis.scopes[exposureScope].exposures,
     leveraged: {
       value: analysis.leveragedValue,
       pct: analysis.leveragedPct,
       maxPct: config.maxLeveragedSleevePct,
     },
     concentrationBreaches: analysis.concentrationBreaches,
+    concentrationScope: analysis.concentrationScope,
+    simulatedConcentrationBreaches: analysis.scopes[analysis.concentrationScope].simulatedConcentrationBreaches,
     incomeSummary: {
       forwardMonthlyIncome: income.forwardMonthlyIncome,
       conservativeMonthlyIncome: income.conservativeMonthlyIncome,
@@ -102,6 +170,7 @@ export function buildPortfolioPayload(ctx: AnalysisContext, priorMonthlyIncome: 
       incomeEngineCapital: income.incomeEngineCapital,
       blendedDistributionRate: income.blendedDistributionRate,
       estimatedEconomicIncomeMonthly: income.estimatedEconomicIncomeMonthly,
+      simulatedCapital: income.simulatedCapital,
       flags: income.flags,
     },
     velocity,
@@ -139,6 +208,15 @@ export function portfolioValueHistory(ctx: AnalysisContext, days: number) {
   });
 }
 
+/** Received-income events belonging to the accounts the active scope admits. */
+function scopedIncomeEvents(ctx: AnalysisContext) {
+  const ids = new Set(ctx.analysis.scoped.accountIds);
+  const symbols = new Set(ctx.income.positions.map((p) => p.symbol));
+  return ctx.snapshot.incomeEvents.filter(
+    (e) => ids.has(e.accountId) && symbols.has(e.symbol.toUpperCase()),
+  );
+}
+
 export function buildIncomePayload(ctx: AnalysisContext, priorMonthlyIncome: number | null) {
   const { snapshot, config, income } = ctx;
   const milestone = activeMilestone(config);
@@ -152,6 +230,7 @@ export function buildIncomePayload(ctx: AnalysisContext, priorMonthlyIncome: num
 
   return {
     ...provenance(snapshot),
+    ...scopeBlock(ctx),
     config,
     milestone,
     milestones: milestoneProgress(income, config),
@@ -160,7 +239,7 @@ export function buildIncomePayload(ctx: AnalysisContext, priorMonthlyIncome: num
     velocity,
     requiredCapital,
     requiredCapitalConservative,
-    monthlyReceived: monthlyReceivedIncome(snapshot.incomeEvents),
+    monthlyReceived: monthlyReceivedIncome(scopedIncomeEvents(ctx)),
     weeklySeries: income.positions.map((p) => ({
       symbol: p.symbol,
       series: weeklyDistributionSeries(snapshot.distributions, p.symbol, 52),
@@ -212,12 +291,17 @@ export function buildSignalsPayload(ctx: AnalysisContext) {
   const opportunities = rankOpportunities(snapshot, analysis, config);
   const drag = diagnoseDrag({ analysis, income, semis, config, opportunities });
 
-  return { ...provenance(snapshot), config, semis, signals, opportunities, drag };
+  return { ...provenance(snapshot), ...scopeBlock(ctx), config, semis, signals, opportunities, drag };
 }
 
-/** Capital the deterministic policy considers available for new allocation. */
+/**
+ * Capital the deterministic policy considers available for new allocation.
+ *
+ * Brokerage cash only. The household reserve is neither added here nor
+ * subtracted from here — it is a separate pool that this figure never touches.
+ */
 export function investableCapital(ctx: AnalysisContext): number {
-  return Math.max(0, ctx.analysis.totals.investableCash);
+  return Math.max(0, ctx.analysis.totals.deployableBrokerCash);
 }
 
 export function buildPlan(ctx: AnalysisContext, capital: number) {
@@ -285,6 +369,7 @@ export function buildSimulation(ctx: AnalysisContext, request: SimulatorRequest)
 
   return {
     ...provenance(snapshot),
+    ...scopeBlock(ctx),
     target,
     modeledRate,
     conservativeRate,

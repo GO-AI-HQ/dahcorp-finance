@@ -16,6 +16,11 @@ export function Portfolio() {
   if (!portfolio.data) return <LoadingCards count={4} />;
 
   const p = portfolio.data;
+  // The exposure ceiling is enforced inside the risk scope, not across the
+  // whole household, so the badge is driven by that scope's weights.
+  const exposureScopeLabel =
+    p.scopeOptions.find((o) => o.scope === p.exposureScope)?.label ?? 'portfolio';
+  const riskExposureWeight = new Map<string, number>(p.riskExposures.map((e) => [e.exposure, e.weight] as const));
   const byAccount = p.accounts.map((account) => ({
     account,
     positions: p.positions.filter((position) => position.accountId === account.account.id),
@@ -51,7 +56,17 @@ export function Portfolio() {
           </div>
         </Card>
 
-        <Card label="Exposure" title="Underlying concentration" hint="Two different tickers can be the same bet. This groups by underlying exposure rather than by symbol.">
+        <Card
+          label="Exposure"
+          title="Underlying concentration"
+          hint={
+            <>
+              Two different tickers can be the same bet. This groups by underlying exposure rather than by symbol. The
+              ceiling itself is enforced against {exposureScopeLabel.toLowerCase()} capital, which is what the badges
+              below report.
+            </>
+          }
+        >
           <div className="table-wrap">
             <table className="data">
               <thead>
@@ -69,10 +84,14 @@ export function Portfolio() {
                     <td className="num">{formatMoney(exposure.marketValue, 0)}</td>
                     <td className="num">
                       {formatPct(exposure.weight, 1)}
-                      {exposure.weight > p.config.maxSingleExposurePct ? (
+                      {(riskExposureWeight.get(exposure.exposure) ?? 0) > p.config.maxSingleExposurePct ? (
                         <>
                           {' '}
-                          <Badge tone="negative" glyph="!">
+                          <Badge
+                            tone="negative"
+                            glyph="!"
+                            title={`${formatPct(riskExposureWeight.get(exposure.exposure) ?? 0, 1)} of ${exposureScopeLabel} capital, against a ${formatPct(p.config.maxSingleExposurePct, 0)} ceiling.`}
+                          >
                             Over limit
                           </Badge>
                         </>
@@ -165,6 +184,23 @@ export function Portfolio() {
                                 Legacy
                               </Badge>
                             ) : null}
+                            {position.verified ? (
+                              <Badge
+                                tone="positive"
+                                glyph="✓"
+                                title="Ownership and cost basis are confirmed. This position may drive live decisions."
+                              >
+                                Confirmed
+                              </Badge>
+                            ) : (
+                              <Badge
+                                tone="warning"
+                                glyph="▲"
+                                title="Demonstration fixture. It illustrates the calculations but cannot trigger a live risk, concentration, harvest or allocation decision until a brokerage adapter verifies ownership and cost basis."
+                              >
+                                {position.verification}
+                              </Badge>
+                            )}
                           </span>
                         </th>
                         <td>{SLEEVE_LABELS[position.sleeve]}</td>

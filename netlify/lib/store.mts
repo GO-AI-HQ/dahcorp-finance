@@ -20,6 +20,7 @@ import type {
   IncomeEvent,
   Sleeve,
 } from '../../src/core/types.js';
+import { parseVerificationStatus } from '../../src/core/scope.js';
 import { seedPositionSource, type PositionSource } from '../../src/services/snapshot.js';
 
 const STRATEGY_KEY = 'strategy_config';
@@ -108,6 +109,7 @@ export async function loadPositionSource(asOf: string): Promise<PositionSource> 
       tacticalCostBasisTotal: row.tacticalCostBasisTotal ?? undefined,
       sleeve: row.sleeve as Sleeve,
       legacy: row.legacy,
+      verification: parseVerificationStatus(row.verification) ?? 'CONFIRMED',
       openedAt: row.openedAt ?? undefined,
     }));
 

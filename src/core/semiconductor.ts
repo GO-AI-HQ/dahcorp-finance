@@ -4,6 +4,8 @@ import { safeDiv } from './math.js';
 import { computeDipSignal, computeTrendSignal, positionDrawdown, type DipSignal, type TrendSignal } from './signals.js';
 import type { PortfolioAnalysis, PositionView } from './portfolio.js';
 import { getInstrumentOrFallback } from './universe.js';
+import type { VerificationStatus } from './scope.js';
+import { decorateTriggerLabel, isVerified, riskScopeFor } from './scope.js';
 
 /**
  * Semiconductor engine.
@@ -33,7 +35,15 @@ export interface HarvestSignal {
   triggerPrice: number | null;
   /** 0-1 progress from cost basis to the trigger. */
   progressToTrigger: number | null;
+  /** Whether the arithmetic conditions of the rule are met. */
   armed: boolean;
+  /**
+   * Whether the rule may actually fire. A SIMULATED or UNVERIFIED position can
+   * be `armed` for demonstration but is never `armedLive`, so it cannot reach
+   * the risk engine, the agent digest or the headline risk banner.
+   */
+  armedLive: boolean;
+  verification: VerificationStatus;
   harvestPortionPct: number;
   /** Shares and dollars the rule would harvest right now. */
   harvestShares: number;
@@ -103,7 +113,14 @@ export interface SemiconductorEngine {
   }[];
   exposure: LeveragedExposure;
   /** The two flywheel legs, for the visualisation. */
-  flywheel: { from: string; to: string; armed: boolean; proceeds: number }[];
+  flywheel: {
+    from: string;
+    to: string;
+    armed: boolean;
+    armedLive: boolean;
+    verification: VerificationStatus;
+    proceeds: number;
+  }[];
 }
 
 export interface RiskReductionSignal {
@@ -147,8 +164,14 @@ export function computeHarvestSignal(args: {
     gainPct != null && rule.triggerGainPct > 0 ? Math.max(0, gainPct) / rule.triggerGainPct : null;
 
   const armed = Boolean(rule.enabled && shares > 0 && gainPct != null && gainPct >= rule.triggerGainPct);
+  const verification: VerificationStatus = position ? position.verification : 'CONFIRMED';
+  const armedLive = armed && isVerified(verification);
   const harvestShares = armed ? shares * rule.harvestPortionPct : 0;
   const harvestProceeds = harvestShares * price;
+
+  const unverifiedNote = armed && !armedLive
+    ? ` Position is ${verification} — the rule is shown for demonstration and cannot fire until a brokerage adapter verifies ownership and cost basis.`
+    : '';
 
   const ruleOutcome = !rule.enabled
     ? `Rule disabled for ${rule.symbol}.`
@@ -157,7 +180,7 @@ export function computeHarvestSignal(args: {
       : gainPct == null
         ? `No tactical cost basis recorded for ${rule.symbol} — cannot evaluate the +${(rule.triggerGainPct * 100).toFixed(0)}% trigger.`
         : armed
-          ? `ARMED: ${rule.symbol} is +${(gainPct * 100).toFixed(1)}% vs tactical basis (trigger +${(rule.triggerGainPct * 100).toFixed(0)}%). Rule harvests ${(rule.harvestPortionPct * 100).toFixed(0)}% → ${rule.destinationSymbol}.`
+          ? `${decorateTriggerLabel(verification, 'ARMED')}: ${rule.symbol} is +${(gainPct * 100).toFixed(1)}% vs tactical basis (trigger +${(rule.triggerGainPct * 100).toFixed(0)}%). Rule harvests ${(rule.harvestPortionPct * 100).toFixed(0)}% → ${rule.destinationSymbol}.${unverifiedNote}`
           : `NOT ARMED: ${rule.symbol} is ${(gainPct * 100).toFixed(1)}% vs tactical basis; trigger is +${(rule.triggerGainPct * 100).toFixed(0)}%.`;
 
   return {
@@ -176,6 +199,8 @@ export function computeHarvestSignal(args: {
     triggerPrice,
     progressToTrigger,
     armed,
+    armedLive,
+    verification,
     harvestPortionPct: rule.harvestPortionPct,
     harvestShares,
     harvestProceeds,
@@ -285,19 +310,26 @@ export function buildSemiconductorEngine(args: {
     };
   });
 
+  // The leveraged-sleeve ceiling is a whole-taxable-capital rule, so it is
+  // measured in the risk scope rather than the display scope. Unverified
+  // positions are excluded from the *limit* test — they cannot justify a live
+  // reduce recommendation — but still appear in the position list below.
+  const sleeveScope = riskScopeFor('sleeve', 'taxable', config.wholePortfolioRules);
+  const sleeveView = analysis.scopes[sleeveScope];
   const leveragedPositions = analysis.positions.filter((p) => p.leverage > 1);
-  const leveragedValue = leveragedPositions.reduce((acc, p) => acc + p.marketValue, 0);
-  const leveragedPct = safeDiv(leveragedValue, analysis.totals.totalValue);
+  const scopedLeveraged = sleeveView.positions.filter((p) => p.leverage > 1 && p.verified);
+  const leveragedValue = scopedLeveraged.reduce((acc, p) => acc + p.marketValue, 0);
+  const leveragedPct = safeDiv(leveragedValue, sleeveView.totalValue);
   const overLimit = leveragedPct > config.maxLeveragedSleevePct;
 
   const exposure: LeveragedExposure = {
     leveragedValue,
     leveragedPct,
     maxPct: config.maxLeveragedSleevePct,
-    headroom: Math.max(0, analysis.totals.totalValue * config.maxLeveragedSleevePct - leveragedValue),
+    headroom: Math.max(0, sleeveView.totalValue * config.maxLeveragedSleevePct - leveragedValue),
     overLimit,
     weightedLeverage: leveragedValue > 0
-      ? leveragedPositions.reduce((acc, p) => acc + p.leverage * p.marketValue, 0) / leveragedValue
+      ? scopedLeveraged.reduce((acc, p) => acc + p.leverage * p.marketValue, 0) / leveragedValue
       : 0,
     positions: leveragedPositions.map((p) => {
       const trend = trendFor(p.symbol);
@@ -358,6 +390,8 @@ export function buildSemiconductorEngine(args: {
       from: t.symbol,
       to: t.destinationSymbol,
       armed: t.harvest.armed,
+      armedLive: t.harvest.armedLive,
+      verification: t.harvest.verification,
       proceeds: t.harvest.harvestProceeds,
     })),
   };

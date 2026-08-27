@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../services/api.js';
 import { useResource } from '../hooks/useResource.js';
@@ -8,6 +9,7 @@ import { Badge } from '../components/Badge.js';
 import { ProgressBar } from '../components/ProgressBar.js';
 import { DataBanner } from '../components/DataBanner.js';
 import { KeyValue } from '../components/KeyValue.js';
+import { ScopeSelector } from '../components/ScopeSelector.js';
 import { ErrorState, LoadingCards } from '../components/States.js';
 import { SeverityBadge } from '../components/SignalBadges.js';
 import { ValueAreaChart } from '../charts/ValueAreaChart.js';
@@ -23,9 +25,12 @@ import {
 import { DISTRIBUTION_BASIS_LABELS } from '../core/config.js';
 
 export function Overview() {
-  const portfolio = useResource(() => api.portfolio(), []);
-  const income = useResource(() => api.income(), []);
-  const signals = useResource(() => api.signals(), []);
+  // Scope is persisted policy, so a change refetches every payload on the page
+  // rather than filtering what is already rendered.
+  const [nonce, setNonce] = useState(0);
+  const portfolio = useResource(() => api.portfolio(), [nonce]);
+  const income = useResource(() => api.income(), [nonce]);
+  const signals = useResource(() => api.signals(), [nonce]);
 
   if (portfolio.error) return <ErrorState error={portfolio.error} onRetry={portfolio.reload} />;
   if (!portfolio.data) return <LoadingCards count={8} />;
@@ -58,6 +63,20 @@ export function Overview() {
       />
 
       <DataBanner containsMockData={p.containsMockData} sourceNotes={p.sourceNotes} asOf={p.asOf} />
+
+      {p.totals.externalReserveUnderfunded ? (
+        <div className="banner banner--risk section">
+          <strong>External liquidity reserve underfunded.</strong> Household liquidity of{' '}
+          {formatMoney(p.totals.externalLiquidityCurrent, 0)} is {formatMoney(p.totals.externalLiquidityGap, 0)} below the{' '}
+          {formatMoney(p.totals.externalLiquidityTarget, 0)} target. The reserve is held outside the brokerages and is
+          never a funding source: contributions are still allocated, but restoring the reserve should take priority over
+          increasing investment pace.
+        </div>
+      ) : null}
+
+      <Card label="Calculation scope" title="What every figure below is measured against" tight>
+        <ScopeSelector scope={p.scope} options={p.scopeOptions} onChanged={() => setNonce((n) => n + 1)} />
+      </Card>
 
       <div className="grid grid--4 section">
         <StatCard
@@ -246,21 +265,32 @@ export function Overview() {
               tone="risk"
               caption={`${formatMoney(p.leveraged.value, 0)} in daily-reset leveraged products. 2× and 3× are daily multiples, never long-term multiples.`}
             />
-            <KeyValue label="Liquidity reserve" hint="never recommended for investment">
-              {formatMoney(p.totals.reservedCash, 0)} of {formatMoney(p.config.liquidityReserve, 0)}
+            <KeyValue label="External liquidity reserve" hint="household cash, held outside the brokerages">
+              {formatMoney(p.totals.externalLiquidityCurrent, 0)} of {formatMoney(p.totals.externalLiquidityTarget, 0)}
+              {p.totals.externalReserveUnderfunded ? ` · ${formatMoney(p.totals.externalLiquidityGap, 0)} short` : ''}
             </KeyValue>
-            <KeyValue label="Investable cash">{formatMoney(p.totals.investableCash)}</KeyValue>
+            <KeyValue label="Deployable brokerage cash" hint="allocation-eligible accounts, net of the settlement floor">
+              {formatMoney(p.totals.deployableBrokerCash)} of {formatMoney(p.totals.brokerCash)}
+            </KeyValue>
             {p.concentrationBreaches.length ? (
               <ul className="bullets">
                 {p.concentrationBreaches.map((b) => (
                   <li key={b.symbol}>
-                    {b.symbol} is {formatPct(b.weight, 1)} of the portfolio against a {formatPct(b.limit, 0)} limit.
+                    {b.symbol} is {formatPct(b.weight, 1)} of {p.scopeOptions.find((o) => o.scope === p.concentrationScope)?.label ?? 'the portfolio'}{' '}
+                    capital against a {formatPct(b.limit, 0)} limit.
                   </li>
                 ))}
               </ul>
             ) : (
-              <p className="meta">No position or exposure limit is currently breached.</p>
+              <p className="meta">No position or exposure limit is currently breached by a confirmed holding.</p>
             )}
+            {p.simulatedConcentrationBreaches.length ? (
+              <p className="meta">
+                {p.simulatedConcentrationBreaches.map((b) => b.symbol).join(', ')} would breach the position limit, but
+                {p.simulatedConcentrationBreaches.length === 1 ? ' it is' : ' they are'} simulated and cannot produce a
+                live risk finding.
+              </p>
+            ) : null}
           </div>
         </Card>
 
