@@ -34,6 +34,30 @@ function loopbackMatches(actual: URL, expected: URL): boolean {
   );
 }
 
+function oauthHttpStatus(error: unknown): number | null {
+  if (!(error instanceof Error)) return null;
+  const match = error.message.match(/(?:failed|request failed)\s*\((\d{3})\)/i);
+  return match ? Number(match[1]) : null;
+}
+
+async function safeAudit(entry: Parameters<typeof recordAudit>[0]): Promise<void> {
+  try {
+    await recordAudit(entry);
+  } catch {
+    // OAuth success/failure must never be converted into an INTERNAL_ERROR just
+    // because secondary audit persistence was unavailable.
+    console.error(`[dahcorp] Robinhood OAuth audit '${entry.action}' could not be recorded.`);
+  }
+}
+
+async function safeClearPending(): Promise<void> {
+  try {
+    await clearRobinhoodPendingAuth();
+  } catch {
+    console.error('[dahcorp] Robinhood pending OAuth record could not be cleared.');
+  }
+}
+
 /**
  * POST /.netlify/functions/robinhood-auth-complete
  *
@@ -77,8 +101,8 @@ export default withErrorHandling('robinhood-auth-complete', async (req: Request)
 
   const providerError = callback.searchParams.get('error');
   if (providerError) {
-    await clearRobinhoodPendingAuth();
-    await recordAudit({
+    await safeClearPending();
+    await safeAudit({
       category: 'auth',
       action: 'robinhood_oauth_denied',
       severity: 'warning',
@@ -93,28 +117,64 @@ export default withErrorHandling('robinhood-auth-complete', async (req: Request)
     return fail(400, 'ROBINHOOD_OAUTH_STATE_INVALID', 'The Robinhood authorization callback could not be verified. Start the connection again.');
   }
 
-  const tokens = await exchangeRobinhoodAuthorizationCode({
-    code,
-    codeVerifier: pending.codeVerifier,
-    redirectUri: pending.redirectUri,
-    clientId: pending.clientId,
-    tokenEndpoint: pending.tokenEndpoint,
-    resource: pending.resource,
-    scope: pending.scope,
-  });
-  const existing = await loadRobinhoodOAuth();
-  await saveRobinhoodOAuth({
-    clientId: pending.clientId,
-    resource: pending.resource,
-    authorizationEndpoint: pending.authorizationEndpoint,
-    tokenEndpoint: pending.tokenEndpoint,
-    registrationEndpoint: pending.registrationEndpoint ?? existing?.registrationEndpoint,
-    redirectUri: pending.redirectUri,
-    scope: tokens.scope ?? pending.scope,
-    tokens,
-  });
-  await clearRobinhoodPendingAuth();
-  await recordAudit({
+  let tokens;
+  try {
+    tokens = await exchangeRobinhoodAuthorizationCode({
+      code,
+      codeVerifier: pending.codeVerifier,
+      redirectUri: pending.redirectUri,
+      clientId: pending.clientId,
+      tokenEndpoint: pending.tokenEndpoint,
+      resource: pending.resource,
+      scope: pending.scope,
+    });
+  } catch (error) {
+    const providerStatus = oauthHttpStatus(error);
+    await safeAudit({
+      category: 'auth',
+      action: 'robinhood_oauth_exchange_failed',
+      severity: 'warning',
+      message: providerStatus
+        ? `Robinhood rejected the authorization-code exchange with HTTP ${providerStatus}.`
+        : 'Robinhood authorization-code exchange failed before tokens were stored.',
+    });
+    return fail(
+      502,
+      'ROBINHOOD_TOKEN_EXCHANGE_FAILED',
+      providerStatus
+        ? `Robinhood rejected the authorization-code exchange (HTTP ${providerStatus}). Start a fresh Robinhood connection; the authorization code is single-use.`
+        : 'The Robinhood authorization-code exchange could not be completed. Start a fresh Robinhood connection.',
+    );
+  }
+
+  try {
+    const existing = await loadRobinhoodOAuth();
+    await saveRobinhoodOAuth({
+      clientId: pending.clientId,
+      resource: pending.resource,
+      authorizationEndpoint: pending.authorizationEndpoint,
+      tokenEndpoint: pending.tokenEndpoint,
+      registrationEndpoint: pending.registrationEndpoint ?? existing?.registrationEndpoint,
+      redirectUri: pending.redirectUri,
+      scope: tokens.scope ?? pending.scope,
+      tokens,
+    });
+  } catch {
+    await safeAudit({
+      category: 'auth',
+      action: 'robinhood_oauth_token_store_failed',
+      severity: 'warning',
+      message: 'Robinhood returned OAuth tokens but encrypted token persistence failed.',
+    });
+    return fail(
+      500,
+      'ROBINHOOD_TOKEN_STORE_FAILED',
+      'Robinhood authorized the connection, but DAHCorp could not store the encrypted credential. Start a fresh connection after the server configuration is corrected.',
+    );
+  }
+
+  await safeClearPending();
+  await safeAudit({
     category: 'auth',
     action: 'robinhood_connected',
     severity: 'info',
