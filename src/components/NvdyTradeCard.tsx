@@ -13,6 +13,7 @@ export function NvdyTradeCard() {
   const [preview, setPreview] = useState<RobinhoodTradePreviewResponse | null>(null);
   const [confirmation, setConfirmation] = useState('');
   const [execution, setExecution] = useState<RobinhoodExecutionResponse | null>(null);
+  const [callbackUrl, setCallbackUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -23,6 +24,21 @@ export function NvdyTradeCard() {
     () => status?.accounts.find((account) => account.id === selectedId) ?? defaultAccount,
     [status, selectedId, defaultAccount],
   );
+
+  async function completeAuthorization() {
+    if (!callbackUrl.trim()) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      await robinhoodApi.completeAuth(callbackUrl.trim());
+      setCallbackUrl('');
+      robinhood.reload();
+    } catch (error) {
+      setMessage(error instanceof ApiError ? error.message : 'The Robinhood authorization could not be completed.');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function createPreview() {
     if (!selectedAccount) return;
@@ -82,7 +98,49 @@ export function NvdyTradeCard() {
         hint="DAHCorp Finance connects directly to Robinhood's official Trading MCP. Authentication and Agentic-account onboarding happen on Robinhood's site."
       >
         <p className="soft" style={{ marginBottom: 14 }}>{status?.note ?? 'Robinhood authorization is required.'}</p>
-        <a className="btn btn--gold" href={status?.connectUrl ?? '/.netlify/functions/robinhood-auth-start'}>Authorize Robinhood</a>
+        <a
+          className="btn btn--gold"
+          href={status?.connectUrl ?? '/.netlify/functions/robinhood-auth-start'}
+          target={status?.manualCompletionRequired ? '_blank' : undefined}
+          rel={status?.manualCompletionRequired ? 'noreferrer' : undefined}
+        >
+          Authorize Robinhood
+        </a>
+
+        {status?.manualCompletionRequired ? (
+          <div className="banner" style={{ marginTop: 14 }}>
+            <span className="banner__glyph">1</span>
+            <div style={{ width: '100%' }}>
+              <strong className="banner__title">Desktop callback handoff</strong>
+              <p className="meta" style={{ marginTop: 4 }}>
+                Robinhood currently restricts some remote MCP OAuth callback URLs. Authorization opens in a new tab. After you approve, Robinhood should send that tab to a localhost address. The page may say it cannot connect — that is expected. Copy the complete localhost URL from the address bar and paste it below.
+              </p>
+              <label className="field" style={{ marginTop: 10 }}>
+                <span className="field__label">Robinhood localhost callback URL</span>
+                <input
+                  type="url"
+                  autoComplete="off"
+                  placeholder="http://localhost:1455/callback?code=…&state=…"
+                  value={callbackUrl}
+                  disabled={busy}
+                  onChange={(event) => setCallbackUrl(event.target.value)}
+                />
+                <span className="field__hint">The authorization code is single-use and is exchanged server-side with PKCE. DAHCorp does not log or display the resulting token.</span>
+              </label>
+              <button
+                className="btn btn--gold"
+                type="button"
+                style={{ marginTop: 10 }}
+                disabled={busy || !callbackUrl.trim()}
+                onClick={completeAuthorization}
+              >
+                {busy ? 'Connecting…' : 'Complete Robinhood connection'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {message ? <p className="meta" style={{ marginTop: 10 }}>{message}</p> : null}
       </Card>
     );
   }

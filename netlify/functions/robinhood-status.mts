@@ -1,6 +1,7 @@
 import { json, methodNotAllowed, withErrorHandling } from '../lib/http.mts';
 import { requireSession } from '../lib/session.mts';
 import { buildServerContext } from '../lib/context.mts';
+import { robinhoodManualCompletionRequired } from '../lib/robinhoodMcp.mts';
 import { ROBINHOOD_EXECUTION_SYMBOL, type RobinhoodAdapter } from '../../src/brokers/robinhood/adapter.js';
 
 /** GET /.netlify/functions/robinhood-status */
@@ -9,6 +10,7 @@ export default withErrorHandling('robinhood-status', async (req: Request) => {
   const { response } = await requireSession(req);
   if (response) return response;
 
+  const manualCompletionRequired = robinhoodManualCompletionRequired();
   const ctx = await buildServerContext();
   const adapter = ctx.adapters.find((item) => item.id === 'robinhood') as RobinhoodAdapter | undefined;
   if (!adapter || !adapter.isConfigured() || !adapter.capabilities.includes('read_quotes')) {
@@ -16,6 +18,7 @@ export default withErrorHandling('robinhood-status', async (req: Request) => {
       connected: false,
       executionEnabled: false,
       connectUrl: '/.netlify/functions/robinhood-auth-start',
+      manualCompletionRequired,
       symbol: ROBINHOOD_EXECUTION_SYMBOL,
       accounts: [],
       quote: null,
@@ -30,6 +33,7 @@ export default withErrorHandling('robinhood-status', async (req: Request) => {
       connected: false,
       executionEnabled: false,
       connectUrl: '/.netlify/functions/robinhood-auth-start',
+      manualCompletionRequired,
       symbol: ROBINHOOD_EXECUTION_SYMBOL,
       accounts: [],
       quote: null,
@@ -50,6 +54,7 @@ export default withErrorHandling('robinhood-status', async (req: Request) => {
     connected: true,
     executionEnabled: adapter.capabilities.includes('place_order') && executionToolsReady,
     connectUrl: '/.netlify/functions/robinhood-auth-start',
+    manualCompletionRequired,
     symbol: ROBINHOOD_EXECUTION_SYMBOL,
     accounts: accountData.accounts.map((account) => ({
       id: account.id,

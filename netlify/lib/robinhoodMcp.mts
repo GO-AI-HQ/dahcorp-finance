@@ -55,6 +55,28 @@ export function robinhoodCallbackUrl(): string | null {
   return runtimeEnv('ROBINHOOD_CALLBACK_URL')?.trim() || null;
 }
 
+/**
+ * Robinhood currently rejects some otherwise-valid remote HTTPS redirect URIs
+ * for dynamically registered MCP clients. A desktop loopback URI can therefore
+ * be configured independently from DAHCorp's own web callback. The resulting
+ * one-time callback URL is pasted back into the private dashboard and exchanged
+ * server-side with the original PKCE verifier.
+ */
+export function robinhoodOAuthRedirectUrl(): string | null {
+  return runtimeEnv('ROBINHOOD_OAUTH_REDIRECT_URI')?.trim() || robinhoodCallbackUrl();
+}
+
+export function robinhoodManualCompletionRequired(): boolean {
+  const value = robinhoodOAuthRedirectUrl();
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 function metadataUrl(issuer: string, kind: 'oauth-protected-resource' | 'oauth-authorization-server'): string {
   const url = new URL(issuer);
   const suffix = url.pathname === '/' ? '' : url.pathname.replace(/\/$/, '');
@@ -116,30 +138,44 @@ export async function ensureRobinhoodClient(
   const existing = await loadRobinhoodOAuth();
   if (
     existing?.clientId &&
+    existing.redirectUri === redirectUri &&
     existing.resource === discovery.resource &&
     existing.authorizationEndpoint === discovery.authorizationEndpoint &&
     existing.tokenEndpoint === discovery.tokenEndpoint
   ) {
-    return { ...existing, scope: discovery.scope ?? existing.scope, registrationEndpoint: discovery.registrationEndpoint };
+    return {
+      ...existing,
+      scope: discovery.scope ?? existing.scope,
+      registrationEndpoint: discovery.registrationEndpoint,
+    };
   }
 
   if (!discovery.registrationEndpoint) {
     throw new Error('Robinhood OAuth metadata does not advertise dynamic client registration.');
   }
+  const registration: Record<string, unknown> = {
+    client_name: CLIENT_NAME,
+    redirect_uris: [redirectUri],
+    grant_types: ['authorization_code', 'refresh_token'],
+    response_types: ['code'],
+    token_endpoint_auth_method: 'none',
+  };
+  if (discovery.scope) registration.scope = discovery.scope;
+
   const response = await fetch(discovery.registrationEndpoint, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      client_name: CLIENT_NAME,
-      redirect_uris: [redirectUri],
-      grant_types: ['authorization_code', 'refresh_token'],
-      response_types: ['code'],
-      token_endpoint_auth_method: 'none',
-    }),
+    body: JSON.stringify(registration),
   });
   if (!response.ok) throw new Error(`Robinhood dynamic client registration failed (${response.status}).`);
-  const payload = (await response.json()) as { client_id?: string };
+  const payload = (await response.json()) as { client_id?: string; redirect_uris?: unknown };
   if (!payload.client_id) throw new Error('Robinhood dynamic client registration returned no client_id.');
+  if (
+    Array.isArray(payload.redirect_uris) &&
+    payload.redirect_uris.every((item) => typeof item !== 'string' || item !== redirectUri)
+  ) {
+    throw new Error('Robinhood dynamic client registration did not accept the requested redirect URI.');
+  }
 
   const record: RobinhoodOAuthRecord = {
     clientId: payload.client_id,
@@ -147,6 +183,7 @@ export async function ensureRobinhoodClient(
     authorizationEndpoint: discovery.authorizationEndpoint,
     tokenEndpoint: discovery.tokenEndpoint,
     registrationEndpoint: discovery.registrationEndpoint,
+    redirectUri,
     scope: discovery.scope,
   };
   await saveRobinhoodOAuth(record);

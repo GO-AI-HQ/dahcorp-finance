@@ -26,6 +26,8 @@ export interface RobinhoodOAuthRecord {
   authorizationEndpoint: string;
   tokenEndpoint: string;
   registrationEndpoint?: string;
+  /** Exact redirect URI registered for this dynamic OAuth client. */
+  redirectUri?: string;
   scope?: string;
   tokens?: RobinhoodOAuthTokens;
 }

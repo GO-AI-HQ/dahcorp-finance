@@ -5,7 +5,7 @@ import { saveRobinhoodPendingAuth } from '../lib/robinhoodOAuth.mts';
 import {
   discoverRobinhoodOAuth,
   ensureRobinhoodClient,
-  robinhoodCallbackUrl,
+  robinhoodOAuthRedirectUrl,
   robinhoodResource,
 } from '../lib/robinhoodMcp.mts';
 
@@ -32,9 +32,9 @@ export default withErrorHandling('robinhood-auth-start', async (req: Request) =>
   if (response) return response;
   if (session.mode === 'public_demo') return fail(403, 'READ_ONLY_DEMO', 'Robinhood cannot be connected in public demo mode.');
 
-  const redirectUri = robinhoodCallbackUrl();
+  const redirectUri = robinhoodOAuthRedirectUrl();
   if (!redirectUri) {
-    return fail(503, 'ROBINHOOD_OAUTH_NOT_CONFIGURED', 'Set ROBINHOOD_CALLBACK_URL before connecting Robinhood.');
+    return fail(503, 'ROBINHOOD_OAUTH_NOT_CONFIGURED', 'Set ROBINHOOD_CALLBACK_URL or ROBINHOOD_OAUTH_REDIRECT_URI before connecting Robinhood.');
   }
 
   const discovery = await discoverRobinhoodOAuth(robinhoodResource());
