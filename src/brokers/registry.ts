@@ -1,5 +1,5 @@
 import type { BrokerAccountData, BrokerAdapter } from './types.js';
-import { RobinhoodAdapter, readRobinhoodConfig } from './robinhood/adapter.js';
+import { RobinhoodAdapter, readRobinhoodConfig, type RobinhoodMcpGateway } from './robinhood/adapter.js';
 import {
   SchwabAdapter,
   readSchwabConfig,
@@ -15,10 +15,10 @@ import {
 export function buildBrokerRegistry(
   env: Record<string, string | undefined>,
   fallback: (broker: 'robinhood' | 'schwab') => BrokerAccountData,
-  options: { schwabTokenStore?: SchwabTokenStore } = {},
+  options: { schwabTokenStore?: SchwabTokenStore; robinhoodGateway?: RobinhoodMcpGateway | null } = {},
 ): BrokerAdapter[] {
   return [
-    new RobinhoodAdapter(readRobinhoodConfig(env), () => fallback('robinhood')),
+    new RobinhoodAdapter(readRobinhoodConfig(env), () => fallback('robinhood'), options.robinhoodGateway ?? undefined),
     new SchwabAdapter(
       readSchwabConfig(env),
       () => fallback('schwab'),
