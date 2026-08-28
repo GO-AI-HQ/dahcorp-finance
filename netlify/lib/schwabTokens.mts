@@ -22,7 +22,7 @@ function base64ToBytes(value: string): Uint8Array {
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
-async function tokenKey(env: NodeJS.ProcessEnv = process.env): Promise<CryptoKey> {
+async function tokenKey(env: NodeJS.ProcessEnv = process.env) {
   const secret = env.SCHWAB_TOKEN_ENCRYPTION_KEY?.trim();
   if (!secret || secret.length < 32) {
     throw new Error('SCHWAB_TOKEN_ENCRYPTION_KEY must be configured with at least 32 random characters.');
