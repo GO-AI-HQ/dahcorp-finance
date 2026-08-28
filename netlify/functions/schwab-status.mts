@@ -11,7 +11,7 @@ export default withErrorHandling('schwab-status', async (req: Request) => {
 
   const ctx = await buildServerContext();
   const adapter = ctx.adapters.find((item) => item.id === 'schwab') as SchwabAdapter | undefined;
-  if (!adapter || !adapter.isConfigured()) {
+  if (!adapter || !adapter.isConfigured() || !adapter.capabilities.includes('read_quotes')) {
     return json({
       connected: false,
       executionEnabled: false,
@@ -20,7 +20,7 @@ export default withErrorHandling('schwab-status', async (req: Request) => {
       accounts: [],
       quote: null,
       fundingApiAvailable: false,
-      note: 'Schwab production credentials are not configured.',
+      note: 'Schwab production mode and credentials are required before the brokerage can be connected.',
     });
   }
 
