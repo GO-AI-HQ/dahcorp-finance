@@ -6,6 +6,7 @@ import { Badge } from '../components/Badge.js';
 import { ProgressBar } from '../components/ProgressBar.js';
 import { DataBanner } from '../components/DataBanner.js';
 import { YmagTradeCard } from '../components/YmagTradeCard.js';
+import { NvdyTradeCard } from '../components/NvdyTradeCard.js';
 import { EmptyState, ErrorState, LoadingCards } from '../components/States.js';
 import { SLEEVE_LABELS } from '../core/universe.js';
 import { formatMoney, formatPct, formatShares, formatSignedMoney, formatSignedPct } from '../core/format.js';
@@ -17,10 +18,7 @@ export function Portfolio() {
   if (!portfolio.data) return <LoadingCards count={4} />;
 
   const p = portfolio.data;
-  // The exposure ceiling is enforced inside the risk scope, not across the
-  // whole household, so the badge is driven by that scope's weights.
-  const exposureScopeLabel =
-    p.scopeOptions.find((o) => o.scope === p.exposureScope)?.label ?? 'portfolio';
+  const exposureScopeLabel = p.scopeOptions.find((o) => o.scope === p.exposureScope)?.label ?? 'portfolio';
   const riskExposureWeight = new Map<string, number>(p.riskExposures.map((e) => [e.exposure, e.weight] as const));
   const byAccount = p.accounts.map((account) => ({
     account,
@@ -37,9 +35,8 @@ export function Portfolio() {
 
       <DataBanner containsMockData={p.containsMockData} sourceNotes={p.sourceNotes} asOf={p.asOf} />
 
-      <div className="section">
-        <YmagTradeCard />
-      </div>
+      <div className="section"><YmagTradeCard /></div>
+      <div className="section"><NvdyTradeCard /></div>
 
       <div className="grid grid--2 section">
         <Card label="Sleeves" title="Capital by purpose">
@@ -74,14 +71,7 @@ export function Portfolio() {
         >
           <div className="table-wrap">
             <table className="data">
-              <thead>
-                <tr>
-                  <th scope="col">Exposure</th>
-                  <th scope="col">Value</th>
-                  <th scope="col">Weight</th>
-                  <th scope="col">Symbols</th>
-                </tr>
-              </thead>
+              <thead><tr><th scope="col">Exposure</th><th scope="col">Value</th><th scope="col">Weight</th><th scope="col">Symbols</th></tr></thead>
               <tbody>
                 {p.exposures.map((exposure) => (
                   <tr key={exposure.exposure}>
@@ -92,13 +82,7 @@ export function Portfolio() {
                       {(riskExposureWeight.get(exposure.exposure) ?? 0) > p.config.maxSingleExposurePct ? (
                         <>
                           {' '}
-                          <Badge
-                            tone="negative"
-                            glyph="!"
-                            title={`${formatPct(riskExposureWeight.get(exposure.exposure) ?? 0, 1)} of ${exposureScopeLabel} capital, against a ${formatPct(p.config.maxSingleExposurePct, 0)} ceiling.`}
-                          >
-                            Over limit
-                          </Badge>
+                          <Badge tone="negative" glyph="!" title={`${formatPct(riskExposureWeight.get(exposure.exposure) ?? 0, 1)} of ${exposureScopeLabel} capital, against a ${formatPct(p.config.maxSingleExposurePct, 0)} ceiling.`}>Over limit</Badge>
                         </>
                       ) : null}
                     </td>
@@ -124,87 +108,36 @@ export function Portfolio() {
                 <Badge tone={account.account.tradeEligible ? 'positive' : 'neutral'} glyph={account.account.tradeEligible ? '✓' : '✕'}>
                   {account.account.tradeEligible ? 'Trading eligible' : 'Trading off'}
                 </Badge>
-                {account.account.dataQuality === 'mock' ? (
-                  <Badge tone="warning" glyph="▲">
-                    Mock
-                  </Badge>
-                ) : null}
+                {account.account.dataQuality === 'mock' ? <Badge tone="warning" glyph="▲">Mock</Badge> : null}
               </div>
             }
             hint={account.account.role}
           >
             <div className="row" style={{ gap: 'var(--space-5)', marginBottom: 'var(--space-4)' }}>
-              <span>
-                <span className="soft">Value </span>
-                <span className="num">{formatMoney(account.totalValue, 0)}</span>
-              </span>
-              <span>
-                <span className="soft">Cash </span>
-                <span className="num">{formatMoney(account.cash)}</span>
-              </span>
-              <span>
-                <span className="soft">Unrealized </span>
-                <span className="num">
-                  {formatSignedMoney(account.unrealizedPL)} {formatSignedPct(account.unrealizedPLPct)}
-                </span>
-              </span>
+              <span><span className="soft">Value </span><span className="num">{formatMoney(account.totalValue, 0)}</span></span>
+              <span><span className="soft">Cash </span><span className="num">{formatMoney(account.cash)}</span></span>
+              <span><span className="soft">Unrealized </span><span className="num">{formatSignedMoney(account.unrealizedPL)} {formatSignedPct(account.unrealizedPLPct)}</span></span>
             </div>
 
             {positions.length === 0 ? (
-              <EmptyState title="No positions in this account">
-                Cash-only account. Nothing is assumed to be held that the broker has not reported.
-              </EmptyState>
+              <EmptyState title="No positions in this account">Cash-only account. Nothing is assumed to be held that the broker has not reported.</EmptyState>
             ) : (
               <div className="table-wrap">
                 <table className="data">
-                  <thead>
-                    <tr>
-                      <th scope="col">Symbol</th>
-                      <th scope="col">Sleeve</th>
-                      <th scope="col">Shares</th>
-                      <th scope="col">Price</th>
-                      <th scope="col">Value</th>
-                      <th scope="col">Cost / share</th>
-                      <th scope="col">Unrealized</th>
-                      <th scope="col">Weight</th>
-                      <th scope="col">Day</th>
-                    </tr>
-                  </thead>
+                  <thead><tr><th scope="col">Symbol</th><th scope="col">Sleeve</th><th scope="col">Shares</th><th scope="col">Price</th><th scope="col">Value</th><th scope="col">Cost / share</th><th scope="col">Unrealized</th><th scope="col">Weight</th><th scope="col">Day</th></tr></thead>
                   <tbody>
                     {positions.map((position) => (
                       <tr key={`${position.accountId}-${position.symbol}`}>
                         <th scope="row">
                           <span className="symbol">{position.symbol}</span>
-                          <span className="symbol__name" style={{ display: 'block' }}>
-                            {position.name}
-                          </span>
+                          <span className="symbol__name" style={{ display: 'block' }}>{position.name}</span>
                           <span className="tag-list">
-                            {position.leverage > 1 ? (
-                              <Badge tone="risk" glyph="!">
-                                {position.leverage}× daily
-                              </Badge>
-                            ) : null}
-                            {position.legacy ? (
-                              <Badge tone="neutral" glyph="·">
-                                Legacy
-                              </Badge>
-                            ) : null}
+                            {position.leverage > 1 ? <Badge tone="risk" glyph="!">{position.leverage}× daily</Badge> : null}
+                            {position.legacy ? <Badge tone="neutral" glyph="·">Legacy</Badge> : null}
                             {position.verified ? (
-                              <Badge
-                                tone="positive"
-                                glyph="✓"
-                                title="Ownership and cost basis are confirmed. This position may drive live decisions."
-                              >
-                                Confirmed
-                              </Badge>
+                              <Badge tone="positive" glyph="✓" title="Ownership and cost basis are confirmed. This position may drive live decisions.">Confirmed</Badge>
                             ) : (
-                              <Badge
-                                tone="warning"
-                                glyph="▲"
-                                title="Demonstration fixture. It illustrates the calculations but cannot trigger a live risk, concentration, harvest or allocation decision until a brokerage adapter verifies ownership and cost basis."
-                              >
-                                {position.verification}
-                              </Badge>
+                              <Badge tone="warning" glyph="▲" title="Demonstration fixture. It illustrates the calculations but cannot trigger a live risk, concentration, harvest or allocation decision until a brokerage adapter verifies ownership and cost basis.">{position.verification}</Badge>
                             )}
                           </span>
                         </th>
@@ -213,10 +146,7 @@ export function Portfolio() {
                         <td className="num">{formatMoney(position.price)}</td>
                         <td className="num">{formatMoney(position.marketValue)}</td>
                         <td className="num">{formatMoney(position.costBasisPerShare)}</td>
-                        <td className="num">
-                          {formatSignedMoney(position.unrealizedPL)}{' '}
-                          <span className="soft">{formatSignedPct(position.unrealizedPLPct)}</span>
-                        </td>
+                        <td className="num">{formatSignedMoney(position.unrealizedPL)} <span className="soft">{formatSignedPct(position.unrealizedPLPct)}</span></td>
                         <td className="num">{formatPct(position.weight, 1)}</td>
                         <td className="num">{formatSignedPct(position.dayChangePct)}</td>
                       </tr>

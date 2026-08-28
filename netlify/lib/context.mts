@@ -14,6 +14,7 @@ import type { BrokerAccountData, BrokerAdapter } from '../../src/brokers/types.j
 import { loadPositionSource, loadStrategyConfig } from './store.mts';
 import type { StrategyConfig } from '../../src/core/config.js';
 import { loadSchwabRefreshToken, saveSchwabRefreshToken } from './schwabTokens.mts';
+import { createRobinhoodGateway } from './robinhoodMcp.mts';
 
 export function todayISO(now = new Date()): string {
   return now.toISOString().slice(0, 10);
@@ -30,9 +31,8 @@ export interface ServerContext extends AnalysisContext {
 
 /**
  * The broad dashboard market-data provider. The existing mock provider remains
- * the fallback for analytical history. Final Schwab execution never uses it:
- * the Schwab adapter independently obtains a fresh production quote immediately
- * before broker preview and placement.
+ * the fallback for analytical history. Final broker execution never uses it:
+ * each live broker adapter independently obtains a fresh production quote.
  */
 export function selectMarketProvider(env: NodeJS.ProcessEnv = process.env): MarketDataProvider {
   const configured = (env.MARKET_DATA_PROVIDER ?? 'mock').toLowerCase();
@@ -44,7 +44,11 @@ export function selectMarketProvider(env: NodeJS.ProcessEnv = process.env): Mark
 
 export async function buildServerContext(options: { asOf?: string } = {}): Promise<ServerContext> {
   const asOf = options.asOf ?? todayISO();
-  const [{ config, persisted, note }, source] = await Promise.all([loadStrategyConfig(), loadPositionSource(asOf)]);
+  const [{ config, persisted, note }, source, robinhoodGateway] = await Promise.all([
+    loadStrategyConfig(),
+    loadPositionSource(asOf),
+    createRobinhoodGateway().catch(() => null),
+  ]);
   const provider = selectMarketProvider();
 
   const snapshot = await buildPortfolioSnapshot({ asOf, provider, source });
@@ -58,6 +62,7 @@ export async function buildServerContext(options: { asOf?: string } = {}): Promi
     asOf: snapshot.asOf,
   });
   const adapters = buildBrokerRegistry(process.env as Record<string, string | undefined>, fallback, {
+    robinhoodGateway,
     schwabTokenStore: {
       loadRefreshToken: loadSchwabRefreshToken,
       saveRefreshToken: saveSchwabRefreshToken,
