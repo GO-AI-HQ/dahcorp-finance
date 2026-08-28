@@ -6,7 +6,7 @@
  * keeps a first deploy working without provisioning, while never silently
  * pretending mock data is real — `containsMockData` follows the data out.
  */
-import { and, desc, eq, lt } from 'drizzle-orm';
+import { and, desc, eq, gt, lt } from 'drizzle-orm';
 import { getDb, schema } from '../../db/index.js';
 import { DEFAULT_STRATEGY_CONFIG, mergeStrategyConfig, type StrategyConfig } from '../../src/core/config.js';
 import type {
@@ -95,8 +95,7 @@ export async function loadPositionSource(asOf: string): Promise<PositionSource> 
       role: row.role,
       cash: row.cash,
       allocationEligible: row.allocationEligible,
-      // Phase 1: nothing is trade-eligible regardless of what is stored.
-      tradeEligible: false,
+      tradeEligible: row.tradeEligible,
       dataQuality: row.dataQuality as DataQuality,
     }));
 
@@ -343,33 +342,77 @@ export interface OrderPreviewRecord {
   impact: unknown;
 }
 
-export async function saveOrderPreviews(records: OrderPreviewRecord[]): Promise<void> {
+/** Save previews and return their database ids. Existing callers may ignore them. */
+export async function saveOrderPreviews(records: OrderPreviewRecord[]): Promise<number[]> {
   const db = getDb();
-  if (!db || !records.length) return;
+  if (!db || !records.length) return [];
   try {
-    await db.insert(schema.orderPreviews).values(
-      records.map((r) => ({
-        recommendationId: r.recommendationId,
-        accountExternalId: r.accountExternalId,
-        broker: r.broker,
-        symbol: r.symbol,
-        side: r.side,
-        notional: r.notional,
-        quantity: r.quantity,
-        orderType: r.orderType,
-        limitPrice: r.limitPrice,
-        origin: r.origin,
-        sleeve: r.sleeve,
-        rationale: r.rationale,
-        approvedByRisk: r.approvedByRisk,
-        allowedNotional: r.allowedNotional,
-        findings: r.findings as object,
-        impact: r.impact as object,
-        status: 'preview',
-      })),
-    );
+    const rows = await db
+      .insert(schema.orderPreviews)
+      .values(
+        records.map((r) => ({
+          recommendationId: r.recommendationId,
+          accountExternalId: r.accountExternalId,
+          broker: r.broker,
+          symbol: r.symbol,
+          side: r.side,
+          notional: r.notional,
+          quantity: r.quantity,
+          orderType: r.orderType,
+          limitPrice: r.limitPrice,
+          origin: r.origin,
+          sleeve: r.sleeve,
+          rationale: r.rationale,
+          approvedByRisk: r.approvedByRisk,
+          allowedNotional: r.allowedNotional,
+          findings: r.findings as object,
+          impact: r.impact as object,
+          status: 'preview',
+        })),
+      )
+      .returning({ id: schema.orderPreviews.id });
+    return rows.map((row) => row.id);
   } catch (error) {
     console.error('[dahcorp] saveOrderPreviews failed:', error);
+    return [];
+  }
+}
+
+/**
+ * Atomically claim an approved preview for execution. A preview is single-use
+ * and expires after five minutes. This is the duplicate/double-click boundary.
+ */
+export async function claimOrderPreview(id: number) {
+  const db = getDb();
+  if (!db) return null;
+  const cutoff = new Date(Date.now() - 5 * 60_000);
+  try {
+    const rows = await db
+      .update(schema.orderPreviews)
+      .set({ status: 'approved' })
+      .where(
+        and(
+          eq(schema.orderPreviews.id, id),
+          eq(schema.orderPreviews.status, 'preview'),
+          eq(schema.orderPreviews.approvedByRisk, true),
+          gt(schema.orderPreviews.createdAt, cutoff),
+        ),
+      )
+      .returning();
+    return rows[0] ?? null;
+  } catch (error) {
+    console.error('[dahcorp] claimOrderPreview failed:', error);
+    return null;
+  }
+}
+
+export async function setOrderPreviewStatus(id: number, status: string): Promise<void> {
+  const db = getDb();
+  if (!db) return;
+  try {
+    await db.update(schema.orderPreviews).set({ status }).where(eq(schema.orderPreviews.id, id));
+  } catch (error) {
+    console.error('[dahcorp] setOrderPreviewStatus failed:', error);
   }
 }
 
