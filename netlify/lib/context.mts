@@ -10,9 +10,10 @@ import { buildPortfolioSnapshot, seedPositionSource } from '../../src/services/s
 import { mockMarketDataProvider } from '../../src/market/mockProvider.js';
 import type { MarketDataProvider } from '../../src/market/provider.js';
 import { buildBrokerRegistry, describeBrokers, type BrokerStatus } from '../../src/brokers/registry.js';
-import type { BrokerAccountData } from '../../src/brokers/types.js';
+import type { BrokerAccountData, BrokerAdapter } from '../../src/brokers/types.js';
 import { loadPositionSource, loadStrategyConfig } from './store.mts';
 import type { StrategyConfig } from '../../src/core/config.js';
+import { loadSchwabRefreshToken, saveSchwabRefreshToken } from './schwabTokens.mts';
 
 export function todayISO(now = new Date()): string {
   return now.toISOString().slice(0, 10);
@@ -23,11 +24,15 @@ export interface ServerContext extends AnalysisContext {
   configNote: string | null;
   provider: MarketDataProvider;
   brokers: BrokerStatus[];
+  /** Server-only adapter instances. Never serialise this property. */
+  adapters: BrokerAdapter[];
 }
 
 /**
- * The market-data provider. Only the mock generator exists in this build; a live
- * vendor slots in here without touching any calculation, risk or UI code.
+ * The broad dashboard market-data provider. The existing mock provider remains
+ * the fallback for analytical history. Final Schwab execution never uses it:
+ * the Schwab adapter independently obtains a fresh production quote immediately
+ * before broker preview and placement.
  */
 export function selectMarketProvider(env: NodeJS.ProcessEnv = process.env): MarketDataProvider {
   const configured = (env.MARKET_DATA_PROVIDER ?? 'mock').toLowerCase();
@@ -45,8 +50,6 @@ export async function buildServerContext(options: { asOf?: string } = {}): Promi
   const snapshot = await buildPortfolioSnapshot({ asOf, provider, source });
   const analysisContext = buildAnalysisContext(snapshot, config);
 
-  // Broker adapters are constructed with a read-only view of the assembled
-  // model so they never import fixtures or reach into the database themselves.
   const fallback = (broker: 'robinhood' | 'schwab'): BrokerAccountData => ({
     accounts: snapshot.accounts.filter((a) => a.broker === broker),
     holdings: snapshot.holdings.filter((h) =>
@@ -54,7 +57,12 @@ export async function buildServerContext(options: { asOf?: string } = {}): Promi
     ),
     asOf: snapshot.asOf,
   });
-  const adapters = buildBrokerRegistry(process.env as Record<string, string | undefined>, fallback);
+  const adapters = buildBrokerRegistry(process.env as Record<string, string | undefined>, fallback, {
+    schwabTokenStore: {
+      loadRefreshToken: loadSchwabRefreshToken,
+      saveRefreshToken: saveSchwabRefreshToken,
+    },
+  });
 
   return {
     ...analysisContext,
@@ -62,6 +70,7 @@ export async function buildServerContext(options: { asOf?: string } = {}): Promi
     configNote: note,
     provider,
     brokers: describeBrokers(adapters, process.env as Record<string, string | undefined>),
+    adapters,
   };
 }
 
