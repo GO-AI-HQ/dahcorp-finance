@@ -9,6 +9,8 @@ import {
   robinhoodResource,
 } from '../lib/robinhoodMcp.mts';
 
+const STATE_COOKIE = 'dahcorp_robinhood_oauth_state';
+
 function base64url(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -76,6 +78,7 @@ export default withErrorHandling('robinhood-auth-start', async (req: Request) =>
     status: 302,
     headers: {
       Location: `${discovery.authorizationEndpoint}?${params.toString()}`,
+      'Set-Cookie': `${STATE_COOKIE}=${state}; Path=/.netlify/functions/robinhood-callback; HttpOnly; Secure; SameSite=Lax; Max-Age=900`,
       'Cache-Control': 'no-store',
     },
   });
