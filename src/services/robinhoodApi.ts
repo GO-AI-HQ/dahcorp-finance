@@ -37,6 +37,7 @@ export interface RobinhoodStatusResponse {
   connected: boolean;
   executionEnabled: boolean;
   connectUrl: string;
+  manualCompletionRequired: boolean;
   symbol: 'NVDY';
   accounts: {
     id: string;
@@ -84,6 +85,10 @@ export interface RobinhoodExecutionResponse {
 
 export const robinhoodApi = {
   status: () => request<RobinhoodStatusResponse>('/robinhood-status'),
+  completeAuth: (callbackUrl: string) => request<{ connected: true; redirect: string }>('/robinhood-auth-complete', {
+    method: 'POST',
+    body: JSON.stringify({ callbackUrl }),
+  }),
   preview: (accountId: string, quantity: number) => request<RobinhoodTradePreviewResponse>('/robinhood-trade-preview', {
     method: 'POST',
     body: JSON.stringify({ accountId, quantity }),
