@@ -5,6 +5,7 @@ import { Card } from '../components/Card.js';
 import { Badge } from '../components/Badge.js';
 import { ProgressBar } from '../components/ProgressBar.js';
 import { DataBanner } from '../components/DataBanner.js';
+import { YmagTradeCard } from '../components/YmagTradeCard.js';
 import { EmptyState, ErrorState, LoadingCards } from '../components/States.js';
 import { SLEEVE_LABELS } from '../core/universe.js';
 import { formatMoney, formatPct, formatShares, formatSignedMoney, formatSignedPct } from '../core/format.js';
@@ -35,6 +36,10 @@ export function Portfolio() {
       />
 
       <DataBanner containsMockData={p.containsMockData} sourceNotes={p.sourceNotes} asOf={p.asOf} />
+
+      <div className="section">
+        <YmagTradeCard />
+      </div>
 
       <div className="grid grid--2 section">
         <Card label="Sleeves" title="Capital by purpose">
@@ -116,8 +121,8 @@ export function Portfolio() {
                 <Badge tone={account.account.allocationEligible ? 'positive' : 'neutral'} glyph={account.account.allocationEligible ? '✓' : '—'}>
                   {account.account.allocationEligible ? 'Allocation eligible' : 'Not auto-allocated'}
                 </Badge>
-                <Badge tone="neutral" glyph="✕">
-                  Trading off
+                <Badge tone={account.account.tradeEligible ? 'positive' : 'neutral'} glyph={account.account.tradeEligible ? '✓' : '✕'}>
+                  {account.account.tradeEligible ? 'Trading eligible' : 'Trading off'}
                 </Badge>
                 {account.account.dataQuality === 'mock' ? (
                   <Badge tone="warning" glyph="▲">

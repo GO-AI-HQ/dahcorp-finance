@@ -54,10 +54,12 @@ function base64url(bytes: Uint8Array): string {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-function fromBase64url(value: string): Uint8Array {
+function fromBase64url(value: string): Uint8Array<ArrayBuffer> {
   const padded = value.replace(/-/g, '+').replace(/_/g, '/');
   const binary = atob(padded + '='.repeat((4 - (padded.length % 4)) % 4));
-  return Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+  return bytes;
 }
 
 /**
@@ -165,7 +167,7 @@ export async function verifySession(req: Request, env = readSessionEnv(), now = 
       publicDemo: false,
     };
   } catch {
-    return { authenticated: false, mode: null, expiresInSeconds: null, setupRequired: false, publicDemo: false };
+    return { authenticated: false, mode: null, expiresInSeconds: null, setupRequired, publicDemo: false };
   }
 }
 
