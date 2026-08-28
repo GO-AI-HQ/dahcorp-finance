@@ -1,20 +1,30 @@
 import type { BrokerAccountData, BrokerAdapter } from './types.js';
 import { RobinhoodAdapter, readRobinhoodConfig } from './robinhood/adapter.js';
-import { SchwabAdapter, readSchwabConfig } from './schwab/adapter.js';
+import {
+  SchwabAdapter,
+  readSchwabConfig,
+  type SchwabTokenStore,
+} from './schwab/adapter.js';
 
 /**
  * Broker registry. Constructed server-side only, once per request.
  *
- * The `fallback` supplier is how the seeded read-only portfolio model reaches
- * the adapters without the adapters importing fixture data themselves.
+ * The `fallback` supplier is how the seeded portfolio model reaches the
+ * adapters without the adapters importing fixture data themselves.
  */
 export function buildBrokerRegistry(
   env: Record<string, string | undefined>,
   fallback: (broker: 'robinhood' | 'schwab') => BrokerAccountData,
+  options: { schwabTokenStore?: SchwabTokenStore } = {},
 ): BrokerAdapter[] {
   return [
     new RobinhoodAdapter(readRobinhoodConfig(env), () => fallback('robinhood')),
-    new SchwabAdapter(readSchwabConfig(env), () => fallback('schwab')),
+    new SchwabAdapter(
+      readSchwabConfig(env),
+      () => fallback('schwab'),
+      fetch,
+      options.schwabTokenStore,
+    ),
   ];
 }
 
@@ -26,7 +36,6 @@ export interface BrokerStatus {
   missing: string[];
   note: string;
   capabilities: string[];
-  /** Always false in this build. */
   executionEnabled: boolean;
 }
 
@@ -44,7 +53,7 @@ export function describeBrokers(adapters: BrokerAdapter[], env: Record<string, s
       missing: status.missing,
       note: status.note,
       capabilities: adapter.capabilities,
-      executionEnabled: false,
+      executionEnabled: adapter.capabilities.includes('place_order'),
     };
   });
 }
