@@ -62,7 +62,9 @@ function metadataUrl(issuer: string, kind: 'oauth-protected-resource' | 'oauth-a
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, { ...init, headers: { Accept: 'application/json', ...init?.headers } });
+  const headers = new Headers(init?.headers);
+  headers.set('Accept', 'application/json');
+  const response = await fetch(url, { ...init, headers });
   if (!response.ok) throw new Error(`OAuth metadata request failed (${response.status}).`);
   return response.json() as Promise<T>;
 }
@@ -260,9 +262,10 @@ class RobinhoodMcpHttpGateway implements RobinhoodMcpGateway {
     let response = await fetch(this.oauth.resource, { method: 'POST', headers, body: JSON.stringify(body) });
     if (response.status === 401 && retryAuth) {
       const refreshed = await usableOAuthRecord(true);
-      if (!refreshed?.tokens?.accessToken) throw new Error('Robinhood OAuth refresh failed.');
+      const refreshedAccessToken = refreshed?.tokens?.accessToken;
+      if (!refreshed || !refreshedAccessToken) throw new Error('Robinhood OAuth refresh failed.');
       this.oauth = refreshed;
-      headers.Authorization = `Bearer ${this.oauth.tokens.accessToken}`;
+      headers.Authorization = `Bearer ${refreshedAccessToken}`;
       response = await fetch(this.oauth.resource, { method: 'POST', headers, body: JSON.stringify(body) });
     }
     if (!response.ok) throw new Error(`Robinhood MCP request failed (${response.status}).`);
