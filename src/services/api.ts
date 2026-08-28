@@ -15,8 +15,9 @@ import type {
   SimulatorRequest,
 } from './analysis.js';
 import type { BrokerStatus } from '../brokers/registry.js';
+import type { OrderStatus } from '../brokers/types.js';
 import type { StrategyConfig, IncomeMilestone, StrategyLevelInfo } from '../core/config.js';
-import type { RiskDecision } from '../risk/types.js';
+import type { RiskDecision, RiskFinding } from '../risk/types.js';
 import type { AllocationPlan } from '../strategy/allocation.js';
 import type { RecommendationBrief } from '../agent/types.js';
 
@@ -183,6 +184,63 @@ export interface OrderPreviewResponse {
   note: string;
 }
 
+export interface SchwabQuoteResponse {
+  symbol: string;
+  price: number;
+  bid: number | null;
+  ask: number | null;
+  asOf: string;
+}
+
+export interface SchwabStatusResponse {
+  connected: boolean;
+  executionEnabled: boolean;
+  connectUrl: string;
+  symbol: 'YMAG';
+  accounts: {
+    id: string;
+    name: string;
+    cash: number;
+    allocationEligible: boolean;
+    tradeEligible: boolean;
+  }[];
+  quote: SchwabQuoteResponse | null;
+  fundingApiAvailable: false;
+  note: string;
+}
+
+export interface SchwabTradePreviewResponse {
+  approved: boolean;
+  previewId: number | null;
+  symbol: 'YMAG';
+  account: { id: string; name: string; cash: number };
+  quote: SchwabQuoteResponse;
+  quantity: number;
+  estimatedTotal: number;
+  findings: RiskFinding[];
+  brokerPreview?: {
+    accepted: boolean;
+    estimatedPrice: number | null;
+    estimatedShares: number | null;
+    estimatedCommission: number | null;
+    warnings: string[];
+    previewToken: string | null;
+  };
+  expiresInSeconds: number;
+  confirmationText: string | null;
+}
+
+export interface SchwabExecutionResponse {
+  executed: true;
+  previewId: number;
+  symbol: 'YMAG';
+  quantity: number;
+  estimatedNotional: number;
+  quote: SchwabQuoteResponse;
+  order: OrderStatus;
+  note: string;
+}
+
 /* ── Calls ─────────────────────────────────────────────────────────────────── */
 
 export const api = {
@@ -232,6 +290,18 @@ export const api = {
     request<OrderPreviewResponse>('/order-preview', {
       method: 'POST',
       body: JSON.stringify({ orders, recommendationId }),
+    }),
+
+  schwabStatus: () => request<SchwabStatusResponse>('/schwab-status'),
+  schwabTradePreview: (accountId: string, quantity: number) =>
+    request<SchwabTradePreviewResponse>('/schwab-trade-preview', {
+      method: 'POST',
+      body: JSON.stringify({ accountId, quantity }),
+    }),
+  executeOrder: (previewId: number, confirmation: string) =>
+    request<SchwabExecutionResponse>('/order-execute', {
+      method: 'POST',
+      body: JSON.stringify({ previewId, confirmation }),
     }),
 };
 
