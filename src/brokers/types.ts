@@ -6,11 +6,15 @@ import type { ProposedOrder } from '../risk/types.js';
  *
  * Every broker sits behind this interface. The architecture is deliberately:
  *
- *   Claude → Portfolio Service → Risk Engine → Broker Adapter
+ *   Human / Strategy → Portfolio Service → Risk Engine → Broker Adapter
  *
- * and never Claude → raw broker credentials. Adapters are constructed
+ * and never model/UI → raw broker credentials. Adapters are constructed
  * server-side only, from Netlify environment variables, and are never
  * instantiated in browser code.
+ *
+ * A capability appearing here does not itself authorize an order. Production
+ * execution still requires the broker-specific allowlist, deterministic risk
+ * gate, persisted single-use preview and explicit human confirmation.
  */
 export type BrokerCapability =
   | 'read_accounts'
@@ -51,24 +55,22 @@ export interface BrokerAdapter {
   readonly id: BrokerId;
   readonly label: string;
   readonly capabilities: BrokerCapability[];
-  /** True when live credentials are present and the adapter is usable. */
+  /** True when the adapter's configured mode can be used. */
   isConfigured(): boolean;
   /** Human-readable description of what is missing when not configured. */
   configurationStatus(): { configured: boolean; missing: string[]; note: string };
   authenticate(): Promise<{ ok: boolean; message: string }>;
   getAccountData(): Promise<BrokerAccountData>;
   previewOrder(order: ProposedOrder): Promise<OrderPreviewResult>;
-  /** Must throw in Phase 1. Execution is not enabled in this build. */
-  placeOrder(order: ProposedOrder, previewToken: string | null): Promise<OrderStatus>;
+  /** Must throw unless the adapter advertises place_order and its own guard permits it. */
+  placeOrder(order: ProposedOrder, previewToken?: string | null): Promise<OrderStatus>;
   getOrderStatus(brokerOrderId: string): Promise<OrderStatus>;
 }
 
-/** Thrown when execution is attempted while it is disabled. */
+/** Thrown whenever a broker-specific live execution capability is not armed. */
 export class ExecutionDisabledError extends Error {
   constructor(broker: string) {
-    super(
-      `Live order execution is disabled for ${broker}. This build implements Phase 1 (observer) only: orders can be previewed and validated, never placed.`,
-    );
+    super(`Live order execution is disabled for ${broker}. No order was submitted.`);
     this.name = 'ExecutionDisabledError';
   }
 }
