@@ -74,6 +74,7 @@ export default withErrorHandling('robinhood-callback', async (req: Request) => {
     authorizationEndpoint: pending.authorizationEndpoint,
     tokenEndpoint: pending.tokenEndpoint,
     registrationEndpoint: pending.registrationEndpoint ?? existing?.registrationEndpoint,
+    redirectUri: pending.redirectUri,
     scope: tokens.scope ?? pending.scope,
     tokens,
   });
