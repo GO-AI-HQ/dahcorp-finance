@@ -131,7 +131,7 @@ export default withErrorHandling('order-execute', async (req: Request) => {
   }
 
   try {
-    const status = await adapter.placeOrder(order, null);
+    const status = await adapter.placeOrder(order);
     await setOrderPreviewStatus(previewId, 'placed');
     await recordAudit({
       category: 'order',
