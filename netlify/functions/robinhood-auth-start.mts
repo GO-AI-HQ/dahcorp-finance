@@ -5,11 +5,9 @@ import { saveRobinhoodPendingAuth } from '../lib/robinhoodOAuth.mts';
 import {
   discoverRobinhoodOAuth,
   ensureRobinhoodClient,
-  robinhoodCallbackUrl,
+  robinhoodOAuthRedirectUrl,
   robinhoodResource,
 } from '../lib/robinhoodMcp.mts';
-
-const STATE_COOKIE = 'dahcorp_robinhood_oauth_state';
 
 function base64url(bytes: Uint8Array): string {
   let binary = '';
@@ -32,9 +30,9 @@ export default withErrorHandling('robinhood-auth-start', async (req: Request) =>
   if (response) return response;
   if (session.mode === 'public_demo') return fail(403, 'READ_ONLY_DEMO', 'Robinhood cannot be connected in public demo mode.');
 
-  const redirectUri = robinhoodCallbackUrl();
+  const redirectUri = robinhoodOAuthRedirectUrl();
   if (!redirectUri) {
-    return fail(503, 'ROBINHOOD_OAUTH_NOT_CONFIGURED', 'Set ROBINHOOD_CALLBACK_URL before connecting Robinhood.');
+    return fail(503, 'ROBINHOOD_OAUTH_NOT_CONFIGURED', 'Set ROBINHOOD_CALLBACK_URL or ROBINHOOD_OAUTH_REDIRECT_URI before connecting Robinhood.');
   }
 
   const discovery = await discoverRobinhoodOAuth(robinhoodResource());
@@ -78,7 +76,6 @@ export default withErrorHandling('robinhood-auth-start', async (req: Request) =>
     status: 302,
     headers: {
       Location: `${discovery.authorizationEndpoint}?${params.toString()}`,
-      'Set-Cookie': `${STATE_COOKIE}=${state}; Path=/.netlify/functions/robinhood-callback; HttpOnly; Secure; SameSite=Lax; Max-Age=900`,
       'Cache-Control': 'no-store',
     },
   });
