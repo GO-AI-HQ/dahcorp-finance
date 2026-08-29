@@ -8,11 +8,12 @@ import type { VerificationStatus } from './scope.js';
 import { decorateTriggerLabel, isVerified, riskScopeFor } from './scope.js';
 
 /**
- * Semiconductor engine.
+ * Semiconductor capital-recycling engine.
  *
- * Two permanent cores (TSM, SMH) and two daily-reset leveraged tactical
- * instruments (TSMX ~2x, SOXL ~3x). The tactical sleeve exists to be harvested
- * into the permanent cores, not to be held and DRIPed.
+ * SEMI / SMH / AMD are long-horizon core candidates. TSMX (~2x) and SOXL (3x)
+ * are daily-reset tactical instruments whose eligible profits can be redirected
+ * into the permanent core. The principal watermark is an accounting policy,
+ * never a guarantee that leveraged principal cannot decline.
  *
  * Nothing here treats 2x or 3x daily leverage as 2x or 3x long-term return.
  * Volatility drag is computed and displayed explicitly.
@@ -25,15 +26,20 @@ export interface HarvestSignal {
   shares: number;
   price: number;
   marketValue: number;
-  /** Cost basis used for the harvest test. */
+  /** Verified tactical basis reported by the brokerage. */
   tacticalCostBasis: number;
+  /** Principal reference the recycling engine attempts to leave in place. */
+  principalWatermark: number;
   tacticalCostBasisPerShare: number | null;
+  /** Market value less the principal watermark. May be negative. */
   unrealizedPL: number;
+  /** Positive dollars currently above the principal watermark. */
+  eligibleProfit: number;
   gainPct: number | null;
   triggerGainPct: number;
   /** Price at which the harvest trigger arms. */
   triggerPrice: number | null;
-  /** 0-1 progress from cost basis to the trigger. */
+  /** 0-1 progress from the principal watermark to the trigger. */
   progressToTrigger: number | null;
   /** Whether the arithmetic conditions of the rule are met. */
   armed: boolean;
@@ -44,8 +50,9 @@ export interface HarvestSignal {
    */
   armedLive: boolean;
   verification: VerificationStatus;
+  /** Fraction of eligible profit skimmed when the rule is armed. */
   harvestPortionPct: number;
-  /** Shares and dollars the rule would harvest right now. */
+  /** Shares and dollars of eligible profit the rule would harvest right now. */
   harvestShares: number;
   harvestProceeds: number;
   trendStatus: TrendSignal['status'];
@@ -112,7 +119,7 @@ export interface SemiconductorEngine {
     riskReduction: RiskReductionSignal;
   }[];
   exposure: LeveragedExposure;
-  /** The two flywheel legs, for the visualisation. */
+  /** Tactical-profit redirection legs, for the visualisation. */
   flywheel: {
     from: string;
     to: string;
@@ -150,24 +157,33 @@ export function computeHarvestSignal(args: {
   quote: Quote | undefined;
   trend: TrendSignal | null;
   bars: PriceBar[];
+  /** Zero/absent means use verified tactical cost basis as the watermark. */
+  principalWatermark?: number;
 }): HarvestSignal {
   const { rule, position, quote, trend } = args;
   const price = quote?.price ?? position?.price ?? 0;
   const shares = position?.shares ?? 0;
   const marketValue = shares * price;
   const tacticalCostBasis = position?.tacticalCostBasisTotal ?? 0;
-  const basisPerShare = shares > 0 && tacticalCostBasis > 0 ? tacticalCostBasis / shares : null;
-  const unrealizedPL = marketValue - tacticalCostBasis;
-  const gainPct = tacticalCostBasis > 0 ? unrealizedPL / tacticalCostBasis : null;
+  const configuredWatermark = Number.isFinite(args.principalWatermark) && (args.principalWatermark ?? 0) > 0
+    ? Math.max(0, args.principalWatermark ?? 0)
+    : 0;
+  const principalWatermark = configuredWatermark || tacticalCostBasis;
+  const basisPerShare = shares > 0 && principalWatermark > 0 ? principalWatermark / shares : null;
+  const unrealizedPL = marketValue - principalWatermark;
+  const eligibleProfit = Math.max(0, unrealizedPL);
+  const gainPct = principalWatermark > 0 ? unrealizedPL / principalWatermark : null;
   const triggerPrice = basisPerShare != null ? basisPerShare * (1 + rule.triggerGainPct) : null;
   const progressToTrigger =
     gainPct != null && rule.triggerGainPct > 0 ? Math.max(0, gainPct) / rule.triggerGainPct : null;
 
-  const armed = Boolean(rule.enabled && shares > 0 && gainPct != null && gainPct >= rule.triggerGainPct);
+  const armed = Boolean(rule.enabled && shares > 0 && gainPct != null && gainPct >= rule.triggerGainPct && eligibleProfit > 0);
   const verification: VerificationStatus = position ? position.verification : 'CONFIRMED';
   const armedLive = armed && isVerified(verification);
-  const harvestShares = armed ? shares * rule.harvestPortionPct : 0;
-  const harvestProceeds = harvestShares * price;
+  // Crucially, harvest only a portion of dollars ABOVE the principal watermark,
+  // not a portion of the whole tactical position.
+  const harvestProceeds = armed ? eligibleProfit * rule.harvestPortionPct : 0;
+  const harvestShares = price > 0 ? harvestProceeds / price : 0;
 
   const unverifiedNote = armed && !armedLive
     ? ` Position is ${verification} — the rule is shown for demonstration and cannot fire until a brokerage adapter verifies ownership and cost basis.`
@@ -178,10 +194,10 @@ export function computeHarvestSignal(args: {
     : shares <= 0
       ? `No ${rule.symbol} position held — harvest rule inactive.`
       : gainPct == null
-        ? `No tactical cost basis recorded for ${rule.symbol} — cannot evaluate the +${(rule.triggerGainPct * 100).toFixed(0)}% trigger.`
+        ? `No tactical principal watermark is recorded for ${rule.symbol} — cannot evaluate the +${(rule.triggerGainPct * 100).toFixed(0)}% trigger.`
         : armed
-          ? `${decorateTriggerLabel(verification, 'ARMED')}: ${rule.symbol} is +${(gainPct * 100).toFixed(1)}% vs tactical basis (trigger +${(rule.triggerGainPct * 100).toFixed(0)}%). Rule harvests ${(rule.harvestPortionPct * 100).toFixed(0)}% → ${rule.destinationSymbol}.${unverifiedNote}`
-          : `NOT ARMED: ${rule.symbol} is ${(gainPct * 100).toFixed(1)}% vs tactical basis; trigger is +${(rule.triggerGainPct * 100).toFixed(0)}%.`;
+          ? `${decorateTriggerLabel(verification, 'ARMED')}: ${rule.symbol} is +${(gainPct * 100).toFixed(1)}% above its $${principalWatermark.toFixed(2)} principal watermark (trigger +${(rule.triggerGainPct * 100).toFixed(0)}%). Rule skims ${(rule.harvestPortionPct * 100).toFixed(0)}% of eligible profit → ${rule.destinationSymbol}, leaving the principal watermark invested subject to normal market risk.${unverifiedNote}`
+          : `NOT ARMED: ${rule.symbol} is ${(gainPct * 100).toFixed(1)}% vs its principal watermark; trigger is +${(rule.triggerGainPct * 100).toFixed(0)}%.`;
 
   return {
     symbol: rule.symbol,
@@ -192,8 +208,10 @@ export function computeHarvestSignal(args: {
     price,
     marketValue,
     tacticalCostBasis,
+    principalWatermark,
     tacticalCostBasisPerShare: basisPerShare,
     unrealizedPL,
+    eligibleProfit,
     gainPct,
     triggerGainPct: rule.triggerGainPct,
     triggerPrice,
@@ -255,7 +273,7 @@ export function computeRiskReduction(args: {
     detail:
       action === 'hold'
         ? 'No deterministic risk-reduction trigger is currently met.'
-        : `Deterministic rules recommend: ${action.replace(/_/g, ' ')}. Phase 1 takes no action automatically.`,
+        : `Deterministic rules recommend: ${action.replace(/_/g, ' ')}. Shadow Mode takes no action automatically.`,
   };
 }
 
@@ -267,7 +285,7 @@ export function buildSemiconductorEngine(args: {
   coreSymbols?: string[];
 }): SemiconductorEngine {
   const { analysis, quotes, priceHistory, config } = args;
-  const coreSymbols = args.coreSymbols ?? ['TSM', 'SMH'];
+  const coreSymbols = args.coreSymbols ?? ['SEMI', 'SMH', 'AMD'];
   const benchmarkBars = priceHistory[config.trend.benchmarkSymbol] ?? [];
 
   const positionFor = (symbol: string) => analysis.positions.find((p) => p.symbol === symbol.toUpperCase());
@@ -298,7 +316,7 @@ export function buildSemiconductorEngine(args: {
     return {
       symbol: symbol.toUpperCase(),
       name: instrument.name,
-      role: 'Permanent Core',
+      role: 'Long-horizon Core',
       held: Boolean(position && position.shares > 0),
       shares: position?.shares ?? 0,
       price: quoteFor(symbol).price,
@@ -369,7 +387,14 @@ export function buildSemiconductorEngine(args: {
       unrealizedPLPct: position?.unrealizedPLPct ?? null,
       trend,
       dip: computeDipSignal({ symbol: rule.symbol, bars, quote: quoteFor(rule.symbol), config, trend }),
-      harvest: computeHarvestSignal({ rule, position, quote: quotes[rule.symbol], trend, bars }),
+      harvest: computeHarvestSignal({
+        rule,
+        position,
+        quote: quotes[rule.symbol],
+        trend,
+        bars,
+        principalWatermark: config.tacticalPrincipalWatermarks[rule.symbol] ?? 0,
+      }),
       drawdown,
       estimatedVolatilityDrag: estimateVolatilityDrag(instrument.leverage, underlyingVol),
       riskReduction: computeRiskReduction({
