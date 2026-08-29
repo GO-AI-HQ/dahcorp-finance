@@ -20,6 +20,7 @@ import type { StrategyConfig, IncomeMilestone, StrategyLevelInfo } from '../core
 import type { RiskDecision, RiskFinding, ProposedOrder } from '../risk/types.js';
 import type { AllocationPlan } from '../strategy/allocation.js';
 import type { RecommendationBrief, AgentSource } from '../agent/types.js';
+import type { IntelligenceEvent } from '../intelligence/types.js';
 
 const BASE = '/.netlify/functions';
 
@@ -65,9 +66,6 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
   return body as T;
 }
-
-/* ── Response shapes, derived from the server payload builders so the client
-   and the functions can never drift apart. ─────────────────────────────────── */
 
 export type PortfolioResponse = ReturnType<typeof buildPortfolioPayload> & {
   brokers: BrokerStatus[];
@@ -115,6 +113,57 @@ export interface AnalyzeResponse {
   baseline: { plan: AllocationPlan; riskDecision: RiskDecision };
   executionEnabled: boolean;
   phaseNote: string;
+}
+
+export interface ModelStrategyResponse {
+  asOf: string;
+  recommendationId: number | null;
+  event: IntelligenceEvent | null;
+  capital: number;
+  mandateAccounts: Array<{ id: string; name: string; broker: string; cash: number; role: string }>;
+  research: { available: boolean; model: string | null; text: string; usage: { inputTokens: number; outputTokens: number } | null };
+  source: AgentSource;
+  model: string | null;
+  fallbackReason: string | null;
+  brief: RecommendationBrief;
+  riskDecision: RiskDecision;
+  impact: {
+    currentMonthlyIncome: number;
+    proposedMonthlyIncome: number;
+    monthlyIncomeDelta: number;
+    currentIncomeCapital: number;
+    proposedIncomeCapital: number;
+    proposedRate: number;
+    cashRemaining: number;
+    immediateIncomeEffectKnown: boolean;
+  };
+  proposedProjection: SimulationResponse['projection'];
+  manualSteps: string[];
+  note: string;
+}
+
+export interface AdoptStrategyResponse {
+  adopted: true;
+  recommendationId: number;
+  headline: string;
+  riskDecision: RiskDecision;
+  staged: Array<{
+    stagedPreviewId: number | null;
+    broker: string;
+    accountId: string;
+    symbol: string;
+    side: 'buy' | 'sell';
+    requestedNotional: number;
+    allowedNotional: number;
+    estimatedQuantity: number | null;
+    approved: boolean;
+    executionPath: 'robinhood_guarded' | 'schwab_ymag_guarded' | 'manual_required' | 'blocked';
+    instruction: string;
+    findings: RiskFinding[];
+  }>;
+  crossBroker: boolean;
+  fundingInstruction: string | null;
+  note: string;
 }
 
 export interface SettingsResponse {
@@ -243,8 +292,6 @@ export interface SchwabExecutionResponse {
   note: string;
 }
 
-/* ── Calls ─────────────────────────────────────────────────────────────────── */
-
 export const api = {
   session: () => request<SessionResponse>('/auth-session'),
   login: (passcode: string) =>
@@ -262,6 +309,13 @@ export const api = {
 
   analyze: (question: string, capital?: number) =>
     request<AnalyzeResponse>('/analyze', { method: 'POST', body: JSON.stringify({ question, capital }) }),
+  modelStrategy: (body: { question: string; eventFingerprint?: string | null; capital?: number; horizonMonths?: number }) =>
+    request<ModelStrategyResponse>('/model-strategy', { method: 'POST', body: JSON.stringify(body) }),
+  adoptStrategy: (recommendationId: number, eventFingerprint?: string | null) =>
+    request<AdoptStrategyResponse>('/adopt-strategy', {
+      method: 'POST',
+      body: JSON.stringify({ recommendationId, eventFingerprint: eventFingerprint ?? undefined }),
+    }),
 
   settings: () => request<SettingsResponse>('/settings'),
   saveSettings: (patch: Partial<StrategyConfig>) =>
