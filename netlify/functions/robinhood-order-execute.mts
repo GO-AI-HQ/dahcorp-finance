@@ -2,9 +2,10 @@ import { fail, json, methodNotAllowed, readJsonBody, withErrorHandling } from '.
 import { requireSession } from '../lib/session.mts';
 import { buildServerContext } from '../lib/context.mts';
 import { claimOrderPreview, recordAudit, setOrderPreviewStatus } from '../lib/store.mts';
-import { ROBINHOOD_EXECUTION_SYMBOL, type RobinhoodAdapter } from '../../src/brokers/robinhood/adapter.js';
+import { ROBINHOOD_MAX_EXECUTION_SYMBOLS, type RobinhoodAdapter } from '../../src/brokers/robinhood/adapter.js';
 import { validateRobinhoodExecution } from '../../src/risk/execution.js';
 import type { ProposedOrder } from '../../src/risk/types.js';
+import { getInstrumentOrFallback } from '../../src/core/universe.js';
 
 /** POST /.netlify/functions/robinhood-order-execute */
 export default withErrorHandling('robinhood-order-execute', async (req: Request) => {
@@ -17,22 +18,33 @@ export default withErrorHandling('robinhood-order-execute', async (req: Request)
   const previewId = typeof body?.previewId === 'number' && Number.isInteger(body.previewId) ? body.previewId : 0;
   const confirmation = typeof body?.confirmation === 'string' ? body.confirmation.trim().toUpperCase() : '';
   if (!previewId) return fail(400, 'PREVIEW_REQUIRED', 'A valid live trade preview is required.');
-  if (confirmation !== `BUY ${ROBINHOOD_EXECUTION_SYMBOL}`) return fail(400, 'CONFIRMATION_REQUIRED', `Type BUY ${ROBINHOOD_EXECUTION_SYMBOL} to confirm this order.`);
 
   const preview = await claimOrderPreview(previewId);
   if (!preview) return fail(409, 'PREVIEW_UNAVAILABLE', 'This preview is expired, blocked, already used, or no longer available. Create a new preview.');
+  const symbol = preview.symbol.toUpperCase();
+  if (confirmation !== `BUY ${symbol}`) {
+    await setOrderPreviewStatus(previewId, 'rejected');
+    return fail(400, 'CONFIRMATION_REQUIRED', `Type BUY ${symbol} to confirm this order.`);
+  }
+
   if (
     preview.broker !== 'robinhood' ||
-    preview.symbol.toUpperCase() !== ROBINHOOD_EXECUTION_SYMBOL ||
+    !ROBINHOOD_MAX_EXECUTION_SYMBOLS.includes(symbol as (typeof ROBINHOOD_MAX_EXECUTION_SYMBOLS)[number]) ||
     preview.side !== 'buy' ||
     preview.orderType !== 'market' ||
     preview.quantity == null || !Number.isInteger(preview.quantity) || preview.quantity <= 0
   ) {
     await setOrderPreviewStatus(previewId, 'rejected');
-    return fail(409, 'PREVIEW_POLICY_MISMATCH', 'The stored preview does not match the permitted NVDY execution policy.');
+    return fail(409, 'PREVIEW_POLICY_MISMATCH', 'The stored preview does not match the permitted Robinhood Agentic execution policy.');
   }
 
   const ctx = await buildServerContext();
+  const configuredAllowlist = ctx.config.agenticGrowthAllowlist.map((item) => item.toUpperCase());
+  if (ctx.config.agenticExecutionMode === 'shadow' || !configuredAllowlist.includes(symbol)) {
+    await setOrderPreviewStatus(previewId, 'rejected');
+    return fail(403, 'AGENTIC_POLICY_CHANGED', 'The Agentic execution mode or strategy allowlist changed after this preview. No order was submitted.');
+  }
+
   const adapter = ctx.adapters.find((item) => item.id === 'robinhood') as RobinhoodAdapter | undefined;
   if (!adapter || !adapter.capabilities.includes('place_order')) {
     await setOrderPreviewStatus(previewId, 'rejected');
@@ -41,7 +53,7 @@ export default withErrorHandling('robinhood-order-execute', async (req: Request)
 
   const [accountData, quote] = await Promise.all([
     adapter.getAccountData(),
-    adapter.getQuote(ROBINHOOD_EXECUTION_SYMBOL),
+    adapter.getQuote(symbol),
   ]);
   const account = accountData.accounts.find((item) => item.id === preview.accountExternalId && item.broker === 'robinhood');
   if (!account || !account.tradeEligible) {
@@ -50,7 +62,7 @@ export default withErrorHandling('robinhood-order-execute', async (req: Request)
   }
 
   const gate = validateRobinhoodExecution({
-    symbol: ROBINHOOD_EXECUTION_SYMBOL,
+    symbol,
     side: 'buy',
     orderType: 'market',
     quantity: preview.quantity,
@@ -60,25 +72,27 @@ export default withErrorHandling('robinhood-order-execute', async (req: Request)
     maxOrderNotional: ctx.config.maxOrderNotional,
     killSwitch: ctx.config.killSwitch,
     executionEnabled: true,
+    allowlist: configuredAllowlist,
   });
   if (!gate.approved) {
     await setOrderPreviewStatus(previewId, 'rejected');
-    await recordAudit({ category: 'risk', action: 'nvdy_execution_revalidation_blocked', severity: 'warning', message: `Live Robinhood execution of preview ${previewId} was blocked during final revalidation.`, detail: { previewId, findingCodes: gate.findings.map((finding) => finding.code) } });
+    await recordAudit({ category: 'risk', action: 'agentic_execution_revalidation_blocked', severity: 'warning', message: `Live Robinhood execution of ${symbol} preview ${previewId} was blocked during final revalidation.`, detail: { previewId, symbol, findingCodes: gate.findings.map((finding) => finding.code) } });
     return fail(409, 'EXECUTION_REVALIDATION_FAILED', 'Market price, Agentic buying power, or policy changed. Create a new preview.', { findings: gate.findings });
   }
 
+  const instrument = getInstrumentOrFallback(symbol);
   const order: ProposedOrder = {
     id: `robinhood-execute-${previewId}`,
     accountId: account.id,
     broker: 'robinhood',
-    symbol: ROBINHOOD_EXECUTION_SYMBOL,
+    symbol,
     side: 'buy',
     quantity: preview.quantity,
     orderType: 'market',
     rationale: preview.rationale,
     origin: 'manual',
     fundingSource: 'broker_cash',
-    sleeve: 'income_engine',
+    sleeve: instrument.sleeve,
   };
 
   try {
@@ -89,7 +103,7 @@ export default withErrorHandling('robinhood-order-execute', async (req: Request)
     }
   } catch (error) {
     await setOrderPreviewStatus(previewId, 'rejected');
-    await recordAudit({ category: 'order', action: 'nvdy_broker_review_failed', severity: 'warning', message: `Final Robinhood review failed for stored preview ${previewId}. No placement was attempted.` });
+    await recordAudit({ category: 'order', action: 'agentic_broker_review_failed', severity: 'warning', message: `Final Robinhood review failed for ${symbol} preview ${previewId}. No placement was attempted.` });
     throw error;
   }
 
@@ -98,15 +112,15 @@ export default withErrorHandling('robinhood-order-execute', async (req: Request)
     await setOrderPreviewStatus(previewId, 'placed');
     await recordAudit({
       category: 'order',
-      action: 'nvdy_order_submitted',
+      action: 'agentic_order_submitted',
       severity: 'info',
-      message: `Submitted human-approved NVDY order from preview ${previewId}.`,
-      detail: { previewId, brokerOrderId: status.brokerOrderId, accountId: account.id, quantity: preview.quantity, estimatedNotional: gate.notional, quoteAsOf: quote.asOf },
+      message: `Submitted human-approved ${symbol} order from preview ${previewId}.`,
+      detail: { previewId, symbol, brokerOrderId: status.brokerOrderId, accountId: account.id, quantity: preview.quantity, estimatedNotional: gate.notional, quoteAsOf: quote.asOf },
     });
     return json({
       executed: true,
       previewId,
-      symbol: ROBINHOOD_EXECUTION_SYMBOL,
+      symbol,
       quantity: preview.quantity,
       estimatedNotional: gate.notional,
       quote,
@@ -115,7 +129,7 @@ export default withErrorHandling('robinhood-order-execute', async (req: Request)
     });
   } catch (error) {
     await setOrderPreviewStatus(previewId, 'submission_unknown');
-    await recordAudit({ category: 'order', action: 'nvdy_submission_unknown', severity: 'error', message: `Placement outcome for Robinhood preview ${previewId} could not be confirmed. Do not retry automatically; reconcile Robinhood order history first.`, detail: { previewId, accountId: account.id, quantity: preview.quantity } });
+    await recordAudit({ category: 'order', action: 'agentic_submission_unknown', severity: 'error', message: `Placement outcome for ${symbol} preview ${previewId} could not be confirmed. Do not retry automatically; reconcile Robinhood order history first.`, detail: { previewId, symbol, accountId: account.id, quantity: preview.quantity } });
     throw error;
   }
 });
