@@ -88,7 +88,7 @@ export function PortfolioV2() {
           <div className="panel">
             <span className="soft">Price opportunity</span>
             <strong style={{ display: 'block', marginTop: 4 }}>{buyZone ? 'Buy zone reached' : 'No planned buy zone yet'}</strong>
-            <p className="meta">{semiSignal ? `${formatPct(semiSignal.dip.drawdown, 1)} below the active reference.` : 'Waiting for market signal data.'}</p>
+            <p className="meta">{semiSignal?.dip.declineFromReference == null ? 'Waiting for a usable price reference.' : `${formatPct(semiSignal.dip.declineFromReference, 1)} below the active reference.`}</p>
           </div>
           <div className="panel">
             <span className="soft">Market health</span>
