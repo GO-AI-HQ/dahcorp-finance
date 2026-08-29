@@ -3,7 +3,7 @@ import { useSession } from './hooks/useSession.js';
 import { AppShell } from './components/AppShell.js';
 import { LoginScreen } from './components/LoginScreen.js';
 import { LoadingCards } from './components/States.js';
-import { Overview } from './pages/Overview.js';
+import { OverviewV2 } from './pages/OverviewV2.js';
 import { IncomeEngine } from './pages/IncomeEngine.js';
 import { Portfolio } from './pages/Portfolio.js';
 import { Growth } from './pages/Growth.js';
@@ -33,14 +33,10 @@ export function App() {
     return (
       <div className="login">
         <div className="card login__card" role="alert">
-          <p className="card__label">
-            <span>DAHCorp Finance</span>
-          </p>
+          <p className="card__label"><span>DAHCorp Finance</span></p>
           <h1 style={{ fontSize: '1.3rem', marginBottom: 8 }}>Cannot reach the server</h1>
           <p className="meta">{error}</p>
-          <button type="button" className="btn btn--gold btn--block" onClick={() => window.location.reload()}>
-            Retry
-          </button>
+          <button type="button" className="btn btn--gold btn--block" onClick={() => window.location.reload()}>Retry</button>
         </div>
       </div>
     );
@@ -51,7 +47,7 @@ export function App() {
   return (
     <AppShell>
       <Routes>
-        <Route path="/" element={<Overview />} />
+        <Route path="/" element={<OverviewV2 />} />
         <Route path="/income" element={<IncomeEngine />} />
         <Route path="/portfolio" element={<Portfolio />} />
         <Route path="/growth" element={<Growth />} />
