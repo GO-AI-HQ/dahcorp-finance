@@ -38,9 +38,9 @@ export interface Account {
   /** Strategic role in the plan; shown in the UI. */
   role: string;
   cash: number;
-  /** Phase 1: only taxable accounts are eligible for new allocation. */
+  /** Whether this account's cash is authorized for strategy allocation. */
   allocationEligible: boolean;
-  /** Phase 1: no account is trade-eligible. */
+  /** Whether the broker transport permits trading in this account. */
   tradeEligible: boolean;
   dataQuality: DataQuality;
 }
@@ -51,17 +51,23 @@ export interface Holding {
   symbol: string;
   /** Fractional shares are normal here (Robinhood dollar-based buys). */
   shares: number;
-  /** Total dollars paid, not per-share. */
+  /** Total dollars paid, not per-share. Zero is only meaningful when costBasisKnown is not false. */
   costBasisTotal: number;
+  /**
+   * Brokerage ownership and brokerage tax-lot availability are different facts.
+   * `false` means the holding is real/confirmed but its basis was not supplied,
+   * so unrealized P/L and basis-dependent harvest math must remain unavailable.
+   * Absent defaults to true for backwards-compatible stored/manual holdings.
+   */
+  costBasisKnown?: boolean;
   /** Tactical cost basis for leveraged sleeve harvest math, when it differs. */
   tacticalCostBasisTotal?: number;
   sleeve: Sleeve;
   /** Set when the position is a legacy remnant rather than an active thesis. */
   legacy?: boolean;
   /**
-   * Whether ownership and cost basis have been verified against a brokerage.
-   * Absent means CONFIRMED — fixtures opt into SIMULATED explicitly, so that
-   * demonstration data can never arm a live trigger.
+   * Whether ownership has been verified against a brokerage.
+   * Cost-basis availability is tracked separately by `costBasisKnown`.
    */
   verification?: VerificationStatus;
   openedAt?: string;
