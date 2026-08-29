@@ -5,12 +5,12 @@ import { Badge } from './Badge.js';
 
 export const ROUTES = [
   { path: '/', label: 'Overview' },
-  { path: '/income', label: 'Income Engine' },
+  { path: '/income', label: 'Income' },
   { path: '/portfolio', label: 'Portfolio' },
-  { path: '/semiconductor', label: 'Semiconductor' },
-  { path: '/opportunities', label: 'Opportunities' },
-  { path: '/simulator', label: 'Simulator' },
-  { path: '/claude', label: 'Agent' },
+  { path: '/growth', label: 'Growth' },
+  { path: '/intelligence', label: 'Intelligence' },
+  { path: '/strategy-lab', label: 'Strategy Lab' },
+  { path: '/agent', label: 'Agent' },
   { path: '/activity', label: 'Activity' },
   { path: '/settings', label: 'Settings' },
 ] as const;
@@ -80,8 +80,8 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <footer className="footer">
         <p>
-          DAHCorp Finance · Agentic strategy in Shadow Mode by default. Broker execution requires separate deterministic
-          gates and explicit investor authorization. Nothing here is investment advice.
+          DAHCorp Finance · Shadow Mode by default. Recommendations are evidence-backed proposals; broker execution
+          requires deterministic safeguards and explicit investor authorization. Nothing here is investment advice.
         </p>
       </footer>
     </div>
