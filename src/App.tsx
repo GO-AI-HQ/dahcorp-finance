@@ -8,7 +8,7 @@ import { IncomeEngine } from './pages/IncomeEngine.js';
 import { Portfolio } from './pages/Portfolio.js';
 import { Growth } from './pages/Growth.js';
 import { Intelligence } from './pages/Intelligence.js';
-import { Simulator } from './pages/Simulator.js';
+import { StrategyLab } from './pages/StrategyLab.js';
 import { ClaudeConsole } from './pages/ClaudeConsole.js';
 import { Activity } from './pages/Activity.js';
 import { Settings } from './pages/Settings.js';
@@ -56,7 +56,7 @@ export function App() {
         <Route path="/portfolio" element={<Portfolio />} />
         <Route path="/growth" element={<Growth />} />
         <Route path="/intelligence" element={<Intelligence />} />
-        <Route path="/strategy-lab" element={<Simulator />} />
+        <Route path="/strategy-lab" element={<StrategyLab />} />
         <Route path="/agent" element={<ClaudeConsole />} />
         <Route path="/activity" element={<Activity />} />
         <Route path="/settings" element={<Settings />} />
