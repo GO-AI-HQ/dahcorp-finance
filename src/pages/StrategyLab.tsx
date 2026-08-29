@@ -182,8 +182,16 @@ export function StrategyLab() {
                 {result.requiredContributions.map((row) => (
                   <tr key={row.months}>
                     <th>{formatMonths(row.months)}</th>
-                    <td className="num">{row.monthlyContribution == null ? 'Not solvable' : `${formatMoney(row.monthlyContribution, 0)}/mo`}</td>
-                    <td className="num">{row.conservativeMonthlyContribution == null ? 'Not solvable' : `${formatMoney(row.conservativeMonthlyContribution, 0)}/mo`}</td>
+                    <td className="num">
+                      {row.monthlyContribution.achieved && row.monthlyContribution.monthlyContribution != null
+                        ? `${formatMoney(row.monthlyContribution.monthlyContribution, 0)}/mo`
+                        : 'Not reachable'}
+                    </td>
+                    <td className="num">
+                      {row.conservativeMonthlyContribution.achieved && row.conservativeMonthlyContribution.monthlyContribution != null
+                        ? `${formatMoney(row.conservativeMonthlyContribution.monthlyContribution, 0)}/mo`
+                        : 'Not reachable'}
+                    </td>
                   </tr>
                 ))}
               </tbody>
