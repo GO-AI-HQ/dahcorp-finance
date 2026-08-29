@@ -1,9 +1,9 @@
 /**
- * The digest handed to Claude.
+ * The digest handed to the Treasury Strategist.
  *
  * Deliberately narrow: derived figures only, no credentials, no account
- * numbers, no personal identifiers. Claude sees the same numbers the investor
- * sees on screen, plus the deterministic policy limits it must work within.
+ * numbers, no personal identifiers. The model sees the same decision evidence
+ * the investor sees, plus deterministic limits it cannot override.
  */
 import type { AnalysisContext } from '../services/analysis.js';
 import { activeMilestone, strategyLevelFor } from '../core/config.js';
@@ -35,7 +35,7 @@ export interface AgentDigest {
     allocationEligibleAccounts: { id: string; name: string; cash: number }[];
     excludedAccounts: { id: string; name: string; reason: string }[];
   };
-  totals: { portfolioValue: number; cash: number; invested: number; unrealizedPL: number };
+  totals: { portfolioValue: number; cash: number; invested: number; unrealizedPL: number | null; costBasisComplete: boolean };
   milestone: { label: string; monthlyIncome: number; progressPct: number; strategyLevel: string };
   income: {
     scope: string;
@@ -57,10 +57,11 @@ export interface AgentDigest {
     price: number;
     marketValue: number;
     weight: number;
+    costBasisKnown: boolean;
     unrealizedPLPct: number | null;
     accountType: string;
     verification: string;
-    /** Only CONFIRMED positions may drive a live decision. */
+    /** Only CONFIRMED positions may drive ownership/exposure decisions. */
     liveDecisionEligible: boolean;
     inCalculationScope: boolean;
     monthlySelfBuyRatio?: number | null;
@@ -86,9 +87,7 @@ export interface AgentDigest {
       leverage: number;
       held: boolean;
       trend: string;
-      /** True when the rule's price condition is met, regardless of verification. */
       harvestArmed: boolean;
-      /** True only when the condition is met AND the position is CONFIRMED. */
       harvestArmedLive: boolean;
       harvestVerification: string;
       harvestRule: string;
@@ -122,6 +121,7 @@ export function buildAgentDigest(args: {
   const milestone = activeMilestone(config);
   const level = strategyLevelFor(income.forwardMonthlyIncome);
   const scopedHoldingIds = new Set(analysis.scoped.positions.map((p) => p.holding.id));
+  const costBasisComplete = analysis.positions.every((p) => p.holding.costBasisKnown !== false);
 
   return {
     asOf: snapshot.asOf,
@@ -151,14 +151,15 @@ export function buildAgentDigest(args: {
         .map((a) => ({
           id: a.account.id,
           name: a.account.name,
-          reason: 'Excluded from automated allocation by policy (retirement / education sleeve).',
+          reason: 'Visible for household awareness but not authorized for this strategy to allocate.',
         })),
     },
     totals: {
       portfolioValue: round(analysis.totals.totalValue, 2),
       cash: round(analysis.totals.totalCash, 2),
       invested: round(analysis.totals.totalInvested, 2),
-      unrealizedPL: round(analysis.totals.unrealizedPL, 2),
+      unrealizedPL: costBasisComplete ? round(analysis.totals.unrealizedPL, 2) : null,
+      costBasisComplete,
     },
     milestone: {
       label: milestone.label,
@@ -185,6 +186,7 @@ export function buildAgentDigest(args: {
     },
     positions: analysis.positions.map((p) => {
       const incomeView = income.positions.find((i) => i.symbol === p.symbol);
+      const costBasisKnown = p.holding.costBasisKnown !== false;
       return {
         symbol: p.symbol,
         sleeve: p.sleeve,
@@ -193,7 +195,8 @@ export function buildAgentDigest(args: {
         price: round(p.price, 2),
         marketValue: round(p.marketValue, 2),
         weight: round(p.weight, 4),
-        unrealizedPLPct: p.unrealizedPLPct,
+        costBasisKnown,
+        unrealizedPLPct: costBasisKnown ? p.unrealizedPLPct : null,
         accountType: p.accountType,
         verification: p.verification,
         liveDecisionEligible: p.verified,
