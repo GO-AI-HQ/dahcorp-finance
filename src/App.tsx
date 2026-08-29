@@ -4,7 +4,7 @@ import { AppShell } from './components/AppShell.js';
 import { LoginScreen } from './components/LoginScreen.js';
 import { LoadingCards } from './components/States.js';
 import { OverviewV2 } from './pages/OverviewV2.js';
-import { IncomeEngine } from './pages/IncomeEngine.js';
+import { IncomeV2 } from './pages/IncomeV2.js';
 import { PortfolioV2 } from './pages/PortfolioV2.js';
 import { Growth } from './pages/Growth.js';
 import { Intelligence } from './pages/Intelligence.js';
@@ -16,9 +16,7 @@ import { Settings } from './pages/Settings.js';
 export function App() {
   const { session, loading, error } = useSession();
 
-  if (loading) {
-    return <div className="main"><LoadingCards count={4} /></div>;
-  }
+  if (loading) return <div className="main"><LoadingCards count={4} /></div>;
 
   if (error && !session) {
     return (
@@ -39,7 +37,7 @@ export function App() {
     <AppShell>
       <Routes>
         <Route path="/" element={<OverviewV2 />} />
-        <Route path="/income" element={<IncomeEngine />} />
+        <Route path="/income" element={<IncomeV2 />} />
         <Route path="/portfolio" element={<PortfolioV2 />} />
         <Route path="/growth" element={<Growth />} />
         <Route path="/intelligence" element={<Intelligence />} />
