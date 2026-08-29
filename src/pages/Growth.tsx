@@ -1,11 +1,15 @@
 import { NavLink, useSearchParams } from 'react-router-dom';
 import { SemiconductorGrowth } from './SemiconductorGrowth.js';
 import { Energy } from './Energy.js';
+import { Shipping } from './Shipping.js';
+import { Technology } from './Technology.js';
 import { GrowthOpportunities } from './GrowthOpportunities.js';
 
 const TABS = [
   { id: 'semiconductors', label: 'Semiconductors' },
   { id: 'energy', label: 'Energy' },
+  { id: 'shipping', label: 'Shipping' },
+  { id: 'technology', label: 'Technology' },
   { id: 'opportunities', label: 'Opportunities' },
 ] as const;
 
@@ -36,7 +40,11 @@ export function Growth() {
         </div>
       </div>
 
-      {active === 'semiconductors' ? <SemiconductorGrowth /> : active === 'energy' ? <Energy /> : <GrowthOpportunities />}
+      {active === 'semiconductors' ? <SemiconductorGrowth />
+        : active === 'energy' ? <Energy />
+          : active === 'shipping' ? <Shipping />
+            : active === 'technology' ? <Technology />
+              : <GrowthOpportunities />}
     </>
   );
 }
