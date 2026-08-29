@@ -16,10 +16,17 @@ export function YmagTradeCard() {
   const [message, setMessage] = useState<string | null>(null);
 
   const status = schwab.data;
-  const selectedId = accountId || status?.accounts[0]?.id || '';
+  // Account ...3085 is the explicitly designated Income mandate. Prefer the
+  // server-authorized row so a UI ordering change can never silently default a
+  // YMAG purchase to another Schwab account.
+  const preferredIncomeAccount = status?.accounts.find((account) => account.allocationEligible && account.name.includes('3085'))
+    ?? status?.accounts.find((account) => account.allocationEligible)
+    ?? status?.accounts[0]
+    ?? null;
+  const selectedId = accountId || preferredIncomeAccount?.id || '';
   const selectedAccount = useMemo(
-    () => status?.accounts.find((account) => account.id === selectedId) ?? status?.accounts[0] ?? null,
-    [status, selectedId],
+    () => status?.accounts.find((account) => account.id === selectedId) ?? preferredIncomeAccount,
+    [status, selectedId, preferredIncomeAccount],
   );
 
   async function createPreview() {
@@ -96,7 +103,7 @@ export function YmagTradeCard() {
 
   return (
     <Card
-      label="Schwab execution"
+      label="Schwab Income execution"
       title="Buy YMAG"
       tone="accent"
       action={
@@ -104,7 +111,7 @@ export function YmagTradeCard() {
           {status.executionEnabled ? 'Human-approved live' : 'Read only'}
         </Badge>
       }
-      hint="Funding is intentionally separate: the Individual Trader API does not expose a supported retail money-transfer endpoint. Move cash through Schwab/MoneyLink; this surface uses Schwab-reported cash available for trading after it arrives."
+      hint="Schwab account 3085 is the designated Income mandate and is selected by default. Funding remains separate: move cash through Schwab/MoneyLink; DAHCorp uses Schwab-reported trading cash after it arrives."
     >
       <div className="grid grid--2" style={{ marginBottom: 16 }}>
         <div>
@@ -115,9 +122,9 @@ export function YmagTradeCard() {
           ) : null}
         </div>
         <div>
-          <p className="meta">Schwab cash available</p>
+          <p className="meta">Income account cash</p>
           <p className="figure figure--sm">{selectedAccount ? formatMoney(selectedAccount.cash) : '—'}</p>
-          <p className="meta">Fresh broker cash is rechecked again at execution.</p>
+          <p className="meta">{selectedAccount?.name.includes('3085') ? '3085 selected · fresh cash rechecked at execution.' : 'Fresh broker cash is rechecked again at execution.'}</p>
         </div>
       </div>
 
@@ -125,8 +132,13 @@ export function YmagTradeCard() {
         <label className="field" style={{ marginBottom: 12 }}>
           <span className="field__label">Schwab account</span>
           <select value={selectedId} onChange={(event) => { setAccountId(event.target.value); setPreview(null); }}>
-            {status.accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+            {status.accounts.map((account) => (
+              <option key={account.id} value={account.id} disabled={!account.allocationEligible}>
+                {account.name}{account.name.includes('3085') ? ' · Income default' : account.allocationEligible ? ' · authorized' : ' · visible only'}
+              </option>
+            ))}
           </select>
+          <span className="field__hint">YMAG live execution is restricted to the Income-authorized Schwab account. Other taxable accounts remain visible but cannot be selected for this mandate.</span>
         </label>
       ) : null}
 
@@ -146,12 +158,12 @@ export function YmagTradeCard() {
               setExecution(null);
             }}
           />
-          <span className="field__hint">Execution is hard-allowlisted to BUY YMAG market orders.</span>
+          <span className="field__hint">Schwab execution remains hard-allowlisted to BUY YMAG whole-share market orders.</span>
         </label>
         <button
           className="btn btn--gold btn--block"
           type="button"
-          disabled={!status.executionEnabled || !selectedAccount || busy}
+          disabled={!status.executionEnabled || !selectedAccount?.allocationEligible || busy}
           onClick={createPreview}
         >
           {busy ? 'Checking…' : 'Preview YMAG buy'}
