@@ -21,12 +21,15 @@ export function Energy() {
 
   const pulse = intelligence.data.pulses.find((item) => item.sector === 'energy');
   const energyEvents = intelligence.data.events.filter((event) => event.sector === 'energy' || event.sector === 'cross_market');
-  const highImpact = energyEvents.find((event) => event.severity === 'high');
+  const highImpact = energyEvents.find((event) => event.severity === 'high') ?? energyEvents[0] ?? null;
   const decision = pulse?.label === 'Constructive'
-    ? 'WATCH FOR QUALIFIED ENTRY'
+    ? 'MODEL A QUALIFIED ENERGY ENTRY'
     : pulse?.label === 'Cautious'
       ? 'HOLD CASH / REVIEW RISK'
       : 'WAIT / WATCH';
+  const modelTo = highImpact
+    ? `/modeling-lab?event=${encodeURIComponent(highImpact.fingerprint)}&question=${encodeURIComponent('Given the latest Energy intelligence and my current portfolio, should I allocate Growth capital to an Energy/nuclear opportunity or hold cash? Recommend a specific amount only if the move improves the strategy after overlap and risk are considered.')}`
+    : `/modeling-lab?question=${encodeURIComponent('Should I allocate Growth capital to an Energy/nuclear opportunity now, or hold cash? Recommend a specific amount only if a supported setup exists.')}`;
 
   return (
     <>
@@ -39,27 +42,23 @@ export function Energy() {
 
       <div className="grid grid--3 section">
         <Card label="Current decision" title={decision}>
-          <p className="meta">
-            Energy intelligence is live as an evidence lane, but no Energy symbol is added to Robinhood execution authority merely because it appears here.
-          </p>
+          <p className="meta">Energy intelligence is a research lane. An Energy symbol is not added to Robinhood execution authority merely because it appears here.</p>
           <div className="row" style={{ gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
+            <Link to={modelTo} className="btn btn--sm btn--gold">Build Proposed Model</Link>
             <Link to="/intelligence" className="btn btn--sm btn--ghost">View intelligence</Link>
-            <Link to="/strategy-lab" className="btn btn--sm btn--ghost">Strategy Lab</Link>
           </div>
         </Card>
 
         <Card label="Energy watch universe" title="What the engine is studying">
-          <div className="tag-list">
-            {ENERGY_INTELLIGENCE_SYMBOLS.map((symbol) => <Badge key={symbol} tone="neutral">{symbol}</Badge>)}
-          </div>
+          <div className="tag-list">{ENERGY_INTELLIGENCE_SYMBOLS.map((symbol) => <Badge key={symbol} tone="neutral">{symbol}</Badge>)}</div>
           <p className="meta" style={{ marginTop: 10 }}>CCJ is Cameco. Watch status is research permission, not trade permission.</p>
         </Card>
 
-        <Card label="Latest high-impact evidence" title={highImpact ? highImpact.headline : 'No high-impact event stored'}>
+        <Card label="Latest material evidence" title={highImpact ? highImpact.headline : 'No material event stored'}>
           {highImpact ? (
             <>
               <p className="meta">{highImpact.summary || highImpact.source}</p>
-              <p className="meta">DAHCorp response: evidence changed; deterministic entry rules still decide whether capital moves.</p>
+              <p className="meta">DAHCorp response: research the portfolio consequence; do not convert the headline directly into a market order.</p>
             </>
           ) : <p className="meta">The absence of a stored high-impact event is not treated as proof that policy risk is neutral.</p>}
         </Card>
@@ -81,15 +80,13 @@ export function Energy() {
             <div className="stack stack--tight">
               {energyEvents.slice(0, 8).map((event) => (
                 <div key={event.fingerprint}>
-                  <div className="row" style={{ justifyContent: 'space-between', gap: 10 }}>
-                    <strong>{event.headline}</strong>
-                    <Badge tone={tone(event.direction)}>{event.direction}</Badge>
-                  </div>
+                  <div className="row" style={{ justifyContent: 'space-between', gap: 10 }}><strong>{event.headline}</strong><Badge tone={tone(event.direction)}>{event.direction}</Badge></div>
                   <p className="meta">{event.source} · {event.eventType}</p>
+                  <p><Link className="btn btn--sm btn--ghost" to={`/modeling-lab?event=${encodeURIComponent(event.fingerprint)}&question=${encodeURIComponent(`What should this Energy event change in my portfolio, if anything? Compare a qualified Energy allocation with holding cash.`)}`}>Model portfolio impact</Link></p>
                 </div>
               ))}
             </div>
-          ) : <p className="meta">No normalized Energy events are stored yet. The hourly intelligence observer will populate this surface as evidence arrives.</p>}
+          ) : <p className="meta">No normalized Energy events are stored yet. The intelligence observer will populate this surface as evidence arrives.</p>}
         </Card>
       </div>
     </>
