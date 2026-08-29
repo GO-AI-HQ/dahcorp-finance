@@ -1,11 +1,5 @@
 import type { IntelligencePayload } from '../intelligence/types.js';
-
-class IntelligenceApiError extends Error {
-  constructor(message: string, readonly status: number) {
-    super(message);
-    this.name = 'IntelligenceApiError';
-  }
-}
+import { ApiError } from './api.js';
 
 async function request(path: string): Promise<IntelligencePayload> {
   let response: Response;
@@ -15,10 +9,21 @@ async function request(path: string): Promise<IntelligencePayload> {
       headers: { Accept: 'application/json' },
     });
   } catch {
-    throw new IntelligenceApiError('Market Intelligence is temporarily unreachable.', 0);
+    throw new ApiError('Market Intelligence is temporarily unreachable.', 0, 'NETWORK');
   }
-  if (!response.ok) throw new IntelligenceApiError(`Market Intelligence request failed (${response.status}).`, response.status);
-  return (await response.json()) as IntelligencePayload;
+
+  const text = await response.text();
+  const body = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+  if (!response.ok) {
+    const error = (body.error ?? {}) as { code?: string; message?: string };
+    throw new ApiError(
+      error.message ?? `Market Intelligence request failed (${response.status}).`,
+      response.status,
+      error.code ?? 'INTELLIGENCE_REQUEST_FAILED',
+      body,
+    );
+  }
+  return body as unknown as IntelligencePayload;
 }
 
 export const intelligenceApi = {
