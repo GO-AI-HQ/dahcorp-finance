@@ -5,7 +5,7 @@ import { LoginScreen } from './components/LoginScreen.js';
 import { LoadingCards } from './components/States.js';
 import { OverviewV2 } from './pages/OverviewV2.js';
 import { IncomeEngine } from './pages/IncomeEngine.js';
-import { Portfolio } from './pages/Portfolio.js';
+import { PortfolioV2 } from './pages/PortfolioV2.js';
 import { Growth } from './pages/Growth.js';
 import { Intelligence } from './pages/Intelligence.js';
 import { StrategyLab } from './pages/StrategyLab.js';
@@ -13,20 +13,11 @@ import { ClaudeConsole } from './pages/ClaudeConsole.js';
 import { Activity } from './pages/Activity.js';
 import { Settings } from './pages/Settings.js';
 
-/**
- * The whole application is behind the session gate. There is no public route:
- * an unauthenticated visitor sees the sign-in screen and nothing else, and the
- * functions enforce the same rule independently.
- */
 export function App() {
   const { session, loading, error } = useSession();
 
   if (loading) {
-    return (
-      <div className="main">
-        <LoadingCards count={4} />
-      </div>
-    );
+    return <div className="main"><LoadingCards count={4} /></div>;
   }
 
   if (error && !session) {
@@ -49,7 +40,7 @@ export function App() {
       <Routes>
         <Route path="/" element={<OverviewV2 />} />
         <Route path="/income" element={<IncomeEngine />} />
-        <Route path="/portfolio" element={<Portfolio />} />
+        <Route path="/portfolio" element={<PortfolioV2 />} />
         <Route path="/growth" element={<Growth />} />
         <Route path="/intelligence" element={<Intelligence />} />
         <Route path="/strategy-lab" element={<StrategyLab />} />
@@ -57,7 +48,6 @@ export function App() {
         <Route path="/activity" element={<Activity />} />
         <Route path="/settings" element={<Settings />} />
 
-        {/* Compatibility routes: preserve old bookmarks while consolidating the product. */}
         <Route path="/semiconductor" element={<Navigate to="/growth?tab=semiconductors" replace />} />
         <Route path="/opportunities" element={<Navigate to="/growth?tab=opportunities" replace />} />
         <Route path="/simulator" element={<Navigate to="/strategy-lab" replace />} />
