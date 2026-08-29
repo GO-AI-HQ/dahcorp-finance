@@ -31,7 +31,7 @@ export function GrowthOpportunities() {
 
   const qualifiedDips = d.signals
     .filter((row) => row.dip.actionable && row.trend.status === 'TREND_CONFIRMED')
-    .sort((a, b) => b.dip.declineFromReference - a.dip.declineFromReference);
+    .sort((a, b) => (b.dip.declineFromReference ?? 0) - (a.dip.declineFromReference ?? 0));
   const topIncome = d.opportunities.find((row) => !row.held && row.scoreDeltaVsHeld != null && row.scoreDeltaVsHeld > 0) ?? d.opportunities[0] ?? null;
 
   return (
@@ -59,7 +59,7 @@ export function GrowthOpportunities() {
                     <strong>{row.symbol} — REVIEW ENTRY</strong>
                     <Badge tone="positive">Buy zone reached</Badge>
                   </div>
-                  <p className="meta">{formatPct(row.dip.declineFromReference, 1)} below reference while market health remains confirmed. This is a setup to evaluate, not an automatic buy.</p>
+                  <p className="meta">{formatPct(row.dip.declineFromReference ?? 0, 1)} below reference while market health remains confirmed. This is a setup to evaluate, not an automatic buy.</p>
                 </div>
               ))}
             </div>
