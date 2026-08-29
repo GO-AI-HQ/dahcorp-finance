@@ -9,6 +9,7 @@ import { PortfolioV2 } from './pages/PortfolioV2.js';
 import { Growth } from './pages/Growth.js';
 import { Intelligence } from './pages/Intelligence.js';
 import { StrategyLab } from './pages/StrategyLab.js';
+import { ModelingLab } from './pages/ModelingLab.js';
 import { ClaudeConsole } from './pages/ClaudeConsole.js';
 import { Activity } from './pages/Activity.js';
 import { Settings } from './pages/Settings.js';
@@ -42,6 +43,7 @@ export function App() {
         <Route path="/growth" element={<Growth />} />
         <Route path="/intelligence" element={<Intelligence />} />
         <Route path="/strategy-lab" element={<StrategyLab />} />
+        <Route path="/modeling-lab" element={<ModelingLab />} />
         <Route path="/agent" element={<ClaudeConsole />} />
         <Route path="/activity" element={<Activity />} />
         <Route path="/settings" element={<Settings />} />
@@ -49,6 +51,7 @@ export function App() {
         <Route path="/semiconductor" element={<Navigate to="/growth?tab=semiconductors" replace />} />
         <Route path="/opportunities" element={<Navigate to="/growth?tab=opportunities" replace />} />
         <Route path="/simulator" element={<Navigate to="/strategy-lab" replace />} />
+        <Route path="/modeling" element={<Navigate to="/modeling-lab" replace />} />
         <Route path="/claude" element={<Navigate to="/agent" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
