@@ -1,7 +1,7 @@
 /**
- * Claude's output contract.
+ * Model output contract.
  *
- * Claude produces a *recommendation*, never an instruction. The shape below is
+ * An LLM produces a *recommendation*, never an instruction. The shape below is
  * advisory data: it is handed to the deterministic risk engine, which decides
  * independently what (if anything) may happen. Nothing in this file can move
  * capital.
@@ -34,14 +34,15 @@ export interface RecommendationBrief {
   etaImpact: string;
   /** Answers to the standing strategic questions, when relevant. */
   notes: string[];
-  /** Data limitations Claude itself flagged. */
+  /** Data limitations the model itself flagged. */
   dataCaveats: string[];
 }
 
+export type AgentSource = 'openai' | 'claude' | 'deterministic';
+
 export interface AgentResult {
   brief: RecommendationBrief;
-  /** 'claude' or 'deterministic' when the model was unavailable. */
-  source: 'claude' | 'deterministic';
+  source: AgentSource;
   model: string | null;
   /** Why the deterministic fallback was used, if it was. */
   fallbackReason: string | null;
