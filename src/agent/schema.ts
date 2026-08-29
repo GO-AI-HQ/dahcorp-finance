@@ -47,17 +47,19 @@ function asStringArray(value: unknown): string[] { return Array.isArray(value) ?
 
 function asLegs(value: unknown): RecommendedLeg[] {
   if (!Array.isArray(value)) return [];
-  return value.map((raw) => {
-    if (typeof raw !== 'object' || raw === null) return null;
+  const legs: RecommendedLeg[] = [];
+  for (const raw of value) {
+    if (typeof raw !== 'object' || raw === null) continue;
     const leg = raw as Record<string, unknown>;
     const symbol = asString(leg.symbol).toUpperCase();
     const amount = typeof leg.amount === 'number' && Number.isFinite(leg.amount) ? leg.amount : NaN;
     const accountId = asString(leg.accountId);
     const sideRaw = asString(leg.side, 'buy').toLowerCase();
-    const side: RecommendedLeg['side'] = sideRaw === 'sell' ? 'sell' : 'buy';
-    if (!symbol || !accountId || !Number.isFinite(amount) || amount <= 0) return null;
-    return { symbol, amount, accountId, side, reason: asString(leg.reason, 'No reason supplied.') };
-  }).filter((leg): leg is RecommendedLeg => leg !== null);
+    const side: 'buy' | 'sell' = sideRaw === 'sell' ? 'sell' : 'buy';
+    if (!symbol || !accountId || !Number.isFinite(amount) || amount <= 0) continue;
+    legs.push({ symbol, amount, accountId, side, reason: asString(leg.reason, 'No reason supplied.') });
+  }
+  return legs;
 }
 
 export function parseRecommendation(input: unknown): RecommendationBrief | null {
