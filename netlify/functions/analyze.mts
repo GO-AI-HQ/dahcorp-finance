@@ -5,7 +5,7 @@ import { buildPlan, buildSignalsPayload, investableCapital } from '../../src/ser
 import { buildAgentDigest } from '../../src/agent/digest.js';
 import { buildDeterministicBrief } from '../../src/agent/fallback.js';
 import { STANDING_QUESTIONS } from '../../src/agent/prompt.js';
-import { requestRecommendation } from '../lib/claude.mts';
+import { requestAgentRecommendation } from '../lib/agentModel.mts';
 import { validateAllocation } from '../../src/risk/engine.js';
 import { getInstrumentOrFallback } from '../../src/core/universe.js';
 import { recordAudit, saveRecommendation } from '../lib/store.mts';
@@ -13,14 +13,15 @@ import { recordAudit, saveRecommendation } from '../lib/store.mts';
 /**
  * POST /.netlify/functions/analyze
  *
- * The agent endpoint, and the place where the architecture is enforced:
+ * The treasury-agent endpoint, and the place where the architecture is enforced:
  *
- *   Claude → Recommendation → Deterministic Risk Engine → Trade Preview → Human
+ *   LLM → Recommendation → Deterministic Risk Engine → Investor
  *
- * Claude's brief is never returned on its own. Every leg it proposes is passed
+ * A model's brief is never trusted on its own. Every proposed leg is passed
  * through `validateAllocation`, and the risk verdict travels with the brief so
- * the UI cannot display an unvalidated recommendation. The engine reads the
- * portfolio and the stored config only — Claude's text cannot influence it.
+ * the UI cannot display an unvalidated recommendation. The deterministic engine
+ * reads the portfolio and stored policy independently — model prose cannot
+ * change risk ceilings or grant execution authority.
  */
 export default withErrorHandling('analyze', async (req: Request) => {
   if (req.method !== 'POST') return methodNotAllowed(['POST']);
@@ -34,9 +35,7 @@ export default withErrorHandling('analyze', async (req: Request) => {
   const ctx = await buildServerContext();
   const signals = buildSignalsPayload(ctx);
 
-  // Capital is bounded by the deterministic policy, not by the request. A caller
-  // cannot ask the agent to consider more than the brokerages can actually
-  // deploy, and the protected household reserve is never part of that figure.
+  // Capital is bounded by deterministic policy, not by the request or the LLM.
   const policyCapital = investableCapital(ctx);
   const requested = typeof body?.capital === 'number' && Number.isFinite(body.capital) ? body.capital : policyCapital;
   const capital = Math.max(0, Math.min(requested, policyCapital));
@@ -59,7 +58,7 @@ export default withErrorHandling('analyze', async (req: Request) => {
     question,
   });
 
-  const agent = await requestRecommendation({
+  const agent = await requestAgentRecommendation({
     question,
     digest,
     capital,
@@ -67,7 +66,6 @@ export default withErrorHandling('analyze', async (req: Request) => {
     deterministicBrief,
   });
 
-  // ── Deterministic validation of whatever came back.
   const riskContext = {
     asOf: ctx.snapshot.asOf,
     analysis: ctx.analysis,
@@ -102,21 +100,27 @@ export default withErrorHandling('analyze', async (req: Request) => {
     headline: agent.brief.headline,
     confidence: agent.brief.confidence,
     brief: agent.brief,
-    // The digest is exactly what the model saw, which is what makes the record
-    // auditable after the fact.
     portfolioSnapshot: digest,
     deterministicOutcome: { plan, riskDecision, baselineDecision },
   });
 
+  const sourceLabel =
+    agent.source === 'openai'
+      ? `OpenAI (${agent.model})`
+      : agent.source === 'claude'
+        ? `Claude (${agent.model})`
+        : 'Deterministic policy';
   await recordAudit({
     category: 'agent',
     action: 'analyze',
     severity: riskDecision.approved ? 'info' : 'warning',
-    message: `${agent.source === 'claude' ? `Claude (${agent.model})` : 'Deterministic policy'}: ${agent.brief.headline}`,
+    message: `${sourceLabel}: ${agent.brief.headline}`,
     detail: {
       recommendationId,
       question,
       capital,
+      source: agent.source,
+      model: agent.model,
       riskApproved: riskDecision.approved,
       blockedCodes: riskDecision.orders
         .flatMap((o) => o.findings)
@@ -139,11 +143,11 @@ export default withErrorHandling('analyze', async (req: Request) => {
     model: agent.model,
     fallbackReason: agent.fallbackReason,
     usage: agent.usage,
-    /** The deterministic verdict on Claude's legs. Never omitted. */
+    /** The deterministic verdict on model-proposed legs. Never omitted. */
     riskDecision,
-    /** The policy's own plan, for side-by-side comparison. */
+    /** The deterministic policy plan, for side-by-side comparison. */
     baseline: { plan, riskDecision: baselineDecision },
     executionEnabled: false,
-    phaseNote: 'Phase 1: analysis only. No order can be placed through this system.',
+    phaseNote: 'Analysis is advisory. Agentic execution remains governed by separate Shadow/Confirm policy and broker-specific risk gates.',
   });
 });
