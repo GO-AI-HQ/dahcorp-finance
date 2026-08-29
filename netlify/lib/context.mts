@@ -129,6 +129,46 @@ async function convergeLiveBrokerState(source: PositionSource, adapters: BrokerA
 }
 
 /**
+ * Brokerage visibility is not spending authority.
+ *
+ * Robinhood MCP already restricts allocation to the Agentic account. Schwab's
+ * Trader API can expose several taxable accounts, but the Income mandate should
+ * not silently absorb cash from unrelated accounts. Until an explicit account
+ * mandate setting exists, only the Schwab account that actually holds YMAG is
+ * allocation-authorized for the Income Engine. Every other Schwab account stays
+ * visible on the household balance sheet but contributes $0 to investable cash.
+ */
+export function applyAccountMandates(source: PositionSource): PositionSource {
+  const schwabIncomeAccounts = new Set(
+    source.holdings
+      .filter((holding) => holding.symbol.toUpperCase() === 'YMAG')
+      .map((holding) => holding.accountId),
+  );
+
+  const accounts = source.accounts.map((account) => {
+    if (account.broker !== 'schwab') return account;
+    const authorized = schwabIncomeAccounts.has(account.id) && account.type === 'taxable';
+    return {
+      ...account,
+      allocationEligible: authorized,
+      tradeEligible: authorized && account.tradeEligible,
+      role: authorized
+        ? 'Schwab Income Engine account — cash may be considered by the income strategy.'
+        : 'Schwab account visible for household awareness; cash is not authorized for automated allocation.',
+    };
+  });
+
+  return {
+    ...source,
+    accounts,
+    notes: [
+      ...source.notes,
+      'Cash authority is mandate-specific: Robinhood Agentic funds Growth; only the designated Schwab Income account contributes to Income deployable cash. Other broker cash remains visible but unavailable to the agent.',
+    ],
+  };
+}
+
+/**
  * Prefer Schwab Market Data Production when the connected Schwab adapter is
  * available. It supplies live quotes for the whole watched universe and live
  * daily history for the strategy allowlist. Distribution history remains the
@@ -171,7 +211,8 @@ export async function buildServerContext(options: { asOf?: string } = {}): Promi
     },
   });
 
-  const source = await convergeLiveBrokerState(storedSource, adapters);
+  const converged = await convergeLiveBrokerState(storedSource, adapters);
+  const source = applyAccountMandates(converged);
   const provider = selectMarketProvider(adapters, config);
   const snapshot = await buildPortfolioSnapshot({ asOf, provider, source });
   const analysisContext = buildAnalysisContext(snapshot, config);
