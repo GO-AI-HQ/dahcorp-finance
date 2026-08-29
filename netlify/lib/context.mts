@@ -11,6 +11,7 @@ import type { MarketDataProvider } from '../../src/market/provider.js';
 import { buildBrokerRegistry, describeBrokers, type BrokerStatus } from '../../src/brokers/registry.js';
 import type { BrokerAccountData, BrokerAdapter } from '../../src/brokers/types.js';
 import type { BrokerId } from '../../src/core/types.js';
+import { getInstrumentOrFallback } from '../../src/core/universe.js';
 import { loadPositionSource, loadStrategyConfig } from './store.mts';
 import type { StrategyConfig } from '../../src/core/config.js';
 import { loadSchwabRefreshToken, saveSchwabRefreshToken } from './schwabTokens.mts';
@@ -73,7 +74,20 @@ async function convergeLiveBrokerState(source: PositionSource, adapters: BrokerA
       accounts = accounts.filter((account) => account.broker !== adapter.id);
       holdings = holdings.filter((holding) => !oldIds.has(holding.accountId));
       accounts.push(...data.accounts);
-      holdings.push(...data.holdings);
+      holdings.push(...data.holdings.map((holding) => {
+        const instrument = getInstrumentOrFallback(holding.symbol);
+        return {
+          ...holding,
+          sleeve: instrument.sleeve,
+          // The verified broker cost basis is the initial principal watermark
+          // for tactical products unless the investor later sets a fixed one.
+          tacticalCostBasisTotal:
+            instrument.leverage > 1
+              ? (holding.tacticalCostBasisTotal ?? holding.costBasisTotal)
+              : holding.tacticalCostBasisTotal,
+          verification: 'CONFIRMED' as const,
+        };
+      }));
       liveBrokers.add(adapter.id);
       notes.push(`${adapter.label} accounts, cash and positions are sourced live from the connected brokerage.`);
     } catch (error) {
