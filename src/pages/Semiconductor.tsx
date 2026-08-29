@@ -7,6 +7,7 @@ import { Badge } from '../components/Badge.js';
 import { ProgressBar } from '../components/ProgressBar.js';
 import { KeyValue } from '../components/KeyValue.js';
 import { DataBanner } from '../components/DataBanner.js';
+import { AgenticReadinessCard } from '../components/AgenticReadinessCard.js';
 import { ErrorState, LoadingCards } from '../components/States.js';
 import { DipBadge, TrendBadge } from '../components/SignalBadges.js';
 import { formatMoney, formatNumber, formatPct, formatShares, formatSignedMoney, formatSignedPct } from '../core/format.js';
@@ -32,21 +33,21 @@ export function Semiconductor() {
     <>
       <PageHead
         eyebrow="Semiconductor"
-        title="Permanent core & tactical sleeve"
-        lede="TSM and SMH are the permanent core. TSMX and SOXL are tactical, daily-reset leveraged instruments — a 2× or 3× daily objective is never a 2× or 3× long-term outcome."
+        title="Capital recycling studio"
+        lede="SEMI, SMH and AMD form the long-horizon core candidate set. TSMX and SOXL are tactical, daily-reset leveraged instruments whose eligible profits can be recycled into durable holdings."
       />
 
       <DataBanner containsMockData={d.containsMockData} sourceNotes={d.sourceNotes} asOf={d.asOf} />
 
+      <div className="section"><AgenticReadinessCard /></div>
+
       <div className="banner banner--risk section" role="note">
-        <span className="banner__glyph" aria-hidden="true">
-          !
-        </span>
+        <span className="banner__glyph" aria-hidden="true">!</span>
         <div>
           <span className="banner__title">Leverage rules in force</span>
           <span>
             The tactical sleeve is capped at {formatPct(exposure.maxPct, 0)} of portfolio value. Leveraged products
-            reset daily, compound path-dependently and decay in choppy markets. Nothing on this page executes.
+            reset daily, compound path-dependently and decay in choppy markets. Shadow observations never place an order.
           </span>
         </div>
       </div>
@@ -60,7 +61,7 @@ export function Semiconductor() {
             tone="ice"
             delta={core.held ? `${formatSignedMoney(core.unrealizedPL)} (${formatSignedPct(core.unrealizedPLPct)})` : undefined}
             deltaDirection={core.unrealizedPL > 0 ? 'up' : core.unrealizedPL < 0 ? 'down' : 'flat'}
-            caption={`${core.name} — ${core.role}. ${core.held ? `${formatShares(core.shares)} shares at ${formatMoney(core.price)}.` : 'Permanent core target; no position reported.'}`}
+            caption={`${core.name} — ${core.role}. ${core.held ? `${formatShares(core.shares)} shares at ${formatMoney(core.price)}.` : 'Approved core candidate; no position reported.'}`}
             footer={
               <div className="tag-list" style={{ marginTop: 10 }}>
                 <TrendBadge trend={core.trend} compact />
@@ -77,7 +78,7 @@ export function Semiconductor() {
             delta={tac.held ? `${formatSignedMoney(tac.unrealizedPL)} (${formatSignedPct(tac.unrealizedPLPct)})` : undefined}
             deltaDirection={tac.unrealizedPL > 0 ? 'up' : tac.unrealizedPL < 0 ? 'down' : 'flat'}
             badge={{ text: 'Leveraged', tone: 'risk', glyph: '!' }}
-            caption={`${tac.name}. Harvests into ${tac.destinationSymbol}. Estimated annual volatility drag ${formatPct(tac.estimatedVolatilityDrag, 1)}.`}
+            caption={`${tac.name}. Eligible profit redirects toward ${tac.destinationSymbol}. Estimated annual volatility drag ${formatPct(tac.estimatedVolatilityDrag, 1)}.`}
             footer={
               <div className="tag-list" style={{ marginTop: 10 }}>
                 <TrendBadge trend={tac.trend} compact />
@@ -96,9 +97,9 @@ export function Semiconductor() {
 
       <div className="grid grid--wide-left section">
         <Card
-          label="Harvest rules"
-          title="Deterministic profit redirection"
-          hint="These rules are arithmetic, not opinion. Claude can explain a trigger but cannot arm, disarm or override one."
+          label="Profit waterfall"
+          title="Tactical principal → recycled gains"
+          hint="These rules are arithmetic, not opinion. The principal watermark is an accounting target, not guaranteed capital protection. Shadow Mode can observe a trigger but cannot execute it."
         >
           <div className="stack">
             {engine.tactical.map((tac) => {
@@ -106,9 +107,7 @@ export function Semiconductor() {
               return (
                 <div key={h.symbol}>
                   <div className="row row--between">
-                    <strong>
-                      {h.symbol} → {h.destinationSymbol}
-                    </strong>
+                    <strong>{h.symbol} → {h.destinationSymbol}</strong>
                     <div className="row" style={{ gap: 8 }}>
                       <Badge tone={h.enabled ? 'ice' : 'neutral'} glyph={h.enabled ? 'i' : '—'}>
                         {h.enabled ? 'Rule enabled' : 'Rule disabled'}
@@ -118,30 +117,30 @@ export function Semiconductor() {
                         glyph={h.armedLive ? '◆' : h.armed ? '▲' : '·'}
                         title={
                           h.armed && !h.armedLive
-                            ? `The price condition is met, but the position is ${h.verification}. The rule cannot fire until a brokerage adapter verifies ownership and cost basis.`
+                            ? `The price condition is met, but the position is ${h.verification}. The rule cannot be eligible until brokerage ownership and basis are verified.`
                             : undefined
                         }
                       >
-                        {h.armedLive ? 'Armed' : h.armed ? `${h.verification} — armed` : 'Not armed'}
+                        {h.armedLive ? 'Shadow trigger' : h.armed ? `${h.verification} — trigger` : 'Not triggered'}
                       </Badge>
                     </div>
                   </div>
                   <ProgressBar
-                    label={`Gain from tactical basis toward the +${formatPct(h.triggerGainPct, 0)} trigger`}
+                    label={`Gain above principal watermark toward the +${formatPct(h.triggerGainPct, 0)} trigger`}
                     value={h.progressToTrigger ?? 0}
                     valueLabel={h.gainPct == null ? '—' : formatSignedPct(h.gainPct, 1)}
                     tone={h.armedLive ? 'gold' : 'ice'}
                     caption={
                       h.triggerPrice != null
-                        ? `Trigger price ${formatMoney(h.triggerPrice)} · current ${formatMoney(h.price)} · basis ${formatMoney(h.tacticalCostBasisPerShare)}/share`
-                        : 'No tactical cost basis recorded, so the trigger cannot be evaluated.'
+                        ? `Trigger ${formatMoney(h.triggerPrice)} · current ${formatMoney(h.price)} · principal watermark ${formatMoney(h.principalWatermark)}`
+                        : 'No verified tactical principal watermark is available, so the trigger cannot be evaluated.'
                     }
                   />
                   <div className="grid grid--2" style={{ gap: 'var(--space-3)', marginTop: 'var(--space-3)' }}>
-                    <KeyValue label="Would harvest">
-                      {formatShares(h.harvestShares)} shares ({formatPct(h.harvestPortionPct, 0)})
+                    <KeyValue label="Eligible profit">{formatMoney(h.eligibleProfit)}</KeyValue>
+                    <KeyValue label="Shadow harvest">
+                      {formatMoney(h.harvestProceeds)} ({formatPct(h.harvestPortionPct, 0)} of eligible profit)
                     </KeyValue>
-                    <KeyValue label="Proceeds to redirect">{formatMoney(h.harvestProceeds)}</KeyValue>
                   </div>
                   <p className="meta">{h.ruleOutcome}</p>
                 </div>
@@ -162,20 +161,19 @@ export function Semiconductor() {
                 <span className="flywheel__node">{leg.to}</span>
                 <p className="meta" style={{ gridColumn: '1 / -1', margin: 0 }}>
                   {leg.armedLive
-                    ? `Armed — ${formatMoney(leg.proceeds)} would move from ${leg.from} into ${leg.to}.`
+                    ? `Shadow trigger — ${formatMoney(leg.proceeds)} of eligible profit would recycle from ${leg.from} into ${leg.to}.`
                     : leg.armed
-                      ? `${leg.verification} — the price condition is met, but this leg cannot fire until the position is verified.`
-                      : `Not armed. No proceeds would move from ${leg.from} today.`}
+                      ? `${leg.verification} — the price condition is met, but this leg cannot become execution-eligible until the position is verified.`
+                      : `Not triggered. No tactical profit would recycle from ${leg.from} today.`}
                 </p>
               </div>
             ))}
             <div className="flywheel__leg">
-              <span className="flywheel__node">Income engine</span>
+              <span className="flywheel__node">Cash Queue</span>
               <span className="flywheel__arrow" aria-hidden="true" />
-              <span className="flywheel__node">Core & tactical</span>
+              <span className="flywheel__node">Qualified entries</span>
               <p className="meta" style={{ gridColumn: '1 / -1', margin: 0 }}>
-                Distributions fund accumulation; tactical gains are harvested into the permanent core. Capital ratchets
-                one way — toward assets that are meant to be held.
+                New funding is optionality. It remains cash until an approved symbol reaches a qualified entry while deterministic risk policy still permits deployment.
               </p>
             </div>
           </div>
@@ -225,9 +223,7 @@ export function Semiconductor() {
               </table>
             </div>
           ) : (
-            <p className="meta" style={{ marginTop: 'var(--space-3)' }}>
-              No leveraged position is currently held.
-            </p>
+            <p className="meta" style={{ marginTop: 'var(--space-3)' }}>No leveraged position is currently held.</p>
           )}
         </Card>
 
@@ -248,9 +244,7 @@ export function Semiconductor() {
                     {formatNumber(item.trend.rsi, 1)} · {formatPct(item.trend.volatilityAnnualised, 0)}
                   </KeyValue>
                   <KeyValue label="Drawdown from recent high">{formatPct(item.trend.drawdownFromRecentHigh, 1)}</KeyValue>
-                  <KeyValue label="Relative strength (60d)">
-                    {formatSignedPct(item.trend.relativeStrength60d, 1)}
-                  </KeyValue>
+                  <KeyValue label="Relative strength (60d)">{formatSignedPct(item.trend.relativeStrength60d, 1)}</KeyValue>
                 </div>
                 <ul className="bullets">
                   {item.trend.checks.map((check) => (
