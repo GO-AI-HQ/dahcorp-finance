@@ -12,6 +12,12 @@ import { buildBrokerRegistry, describeBrokers, type BrokerStatus } from '../../s
 import type { BrokerAccountData, BrokerAdapter } from '../../src/brokers/types.js';
 import type { BrokerId } from '../../src/core/types.js';
 import { getInstrumentOrFallback } from '../../src/core/universe.js';
+import {
+  ENERGY_INTELLIGENCE_SYMBOLS,
+  SEMICONDUCTOR_INTELLIGENCE_SYMBOLS,
+  SHIPPING_INTELLIGENCE_SYMBOLS,
+  TECHNOLOGY_INTELLIGENCE_SYMBOLS,
+} from '../../src/intelligence/taxonomy.js';
 import { loadPositionSource, loadStrategyConfig } from './store.mts';
 import type { StrategyConfig } from '../../src/core/config.js';
 import { loadSchwabRefreshToken, saveSchwabRefreshToken } from './schwabTokens.mts';
@@ -28,7 +34,6 @@ export interface ServerContext extends AnalysisContext {
   configNote: string | null;
   provider: MarketDataProvider;
   brokers: BrokerStatus[];
-  /** Server-only adapter instances. Never serialise this property. */
   adapters: BrokerAdapter[];
 }
 
@@ -41,7 +46,6 @@ function fallbackFromSource(source: PositionSource, broker: 'robinhood' | 'schwa
   };
 }
 
-/** Replace stored/seed broker rows with the broker's own current account state. */
 async function convergeLiveBrokerState(source: PositionSource, adapters: BrokerAdapter[]): Promise<PositionSource> {
   let accounts = source.origin === 'seed' ? source.accounts.filter((account) => account.broker !== 'manual') : [...source.accounts];
   let holdings = source.origin === 'seed'
@@ -75,9 +79,6 @@ async function convergeLiveBrokerState(source: PositionSource, adapters: BrokerA
           ...holding,
           sleeve: instrument.sleeve,
           costBasisKnown,
-          // A missing broker basis is never silently promoted to a tactical
-          // principal watermark. A later investor-set fixed watermark may still
-          // provide an explicit strategy reference.
           tacticalCostBasisTotal:
             instrument.leverage > 1 && costBasisKnown
               ? (holding.tacticalCostBasisTotal ?? holding.costBasisTotal)
@@ -102,12 +103,8 @@ async function convergeLiveBrokerState(source: PositionSource, adapters: BrokerA
   }
 
   const accountIds = new Set(accounts.map((account) => account.id));
-  const contributions = source.origin === 'seed'
-    ? []
-    : source.contributions.filter((contribution) => accountIds.has(contribution.accountId));
-  const incomeEvents = source.origin === 'seed'
-    ? null
-    : source.incomeEvents?.filter((event) => accountIds.has(event.accountId)) ?? null;
+  const contributions = source.origin === 'seed' ? [] : source.contributions.filter((contribution) => accountIds.has(contribution.accountId));
+  const incomeEvents = source.origin === 'seed' ? null : source.incomeEvents?.filter((event) => accountIds.has(event.accountId)) ?? null;
 
   return {
     origin: 'broker',
@@ -123,22 +120,41 @@ async function convergeLiveBrokerState(source: PositionSource, adapters: BrokerA
 
 /** Brokerage visibility is not spending authority. */
 export function applyAccountMandates(source: PositionSource): PositionSource {
-  const schwabIncomeAccounts = new Set(
+  const ymAccounts = new Set(source.holdings.filter((holding) => holding.symbol.toUpperCase() === 'YMAG').map((holding) => holding.accountId));
+  const shippingAccounts = new Set(
     source.holdings
-      .filter((holding) => holding.symbol.toUpperCase() === 'YMAG')
+      .filter((holding) => getInstrumentOrFallback(holding.symbol).sleeve === 'shipping_cyclical')
       .map((holding) => holding.accountId),
   );
 
   const accounts = source.accounts.map((account) => {
     if (account.broker !== 'schwab') return account;
-    const authorized = schwabIncomeAccounts.has(account.id) && account.type === 'taxable';
+    // The investor explicitly designated Schwab ...3085 as the taxable Income
+    // mandate. Existing YMAG ownership remains a compatibility signal if the
+    // broker label is ever reformatted.
+    const incomeAuthorized = account.type === 'taxable' && (account.name.includes('3085') || ymAccounts.has(account.id));
+    const shippingAuthorized = !incomeAuthorized && shippingAccounts.has(account.id);
+    if (incomeAuthorized) {
+      return {
+        ...account,
+        allocationEligible: true,
+        tradeEligible: account.tradeEligible,
+        role: 'Schwab Income account (3085) — cash is reserved for YMAG and qualified income rotations.',
+      };
+    }
+    if (shippingAuthorized) {
+      return {
+        ...account,
+        allocationEligible: true,
+        tradeEligible: account.tradeEligible,
+        role: 'Schwab Maritime account — cash is reserved for the Shipping accumulation strategy.',
+      };
+    }
     return {
       ...account,
-      allocationEligible: authorized,
-      tradeEligible: authorized && account.tradeEligible,
-      role: authorized
-        ? 'Schwab Income Engine account — cash may be considered by the income strategy.'
-        : 'Schwab account visible for household awareness; cash is not authorized for automated allocation.',
+      allocationEligible: false,
+      tradeEligible: false,
+      role: 'Schwab account visible for household awareness; cash is not authorized for a DAHCorp strategy mandate.',
     };
   });
 
@@ -147,7 +163,7 @@ export function applyAccountMandates(source: PositionSource): PositionSource {
     accounts,
     notes: [
       ...source.notes,
-      'Cash authority is mandate-specific: Robinhood Agentic funds Growth; only the designated Schwab Income account contributes to Income deployable cash. Other broker cash remains visible but unavailable to the agent.',
+      'Cash authority is mandate-specific: Robinhood Agentic funds Growth; Schwab 3085 funds Income; a Schwab account with confirmed maritime holdings funds Shipping. Other broker cash remains visible but unavailable to the agent.',
     ],
   };
 }
@@ -167,6 +183,10 @@ export function selectMarketProvider(
       ...config.agenticGrowthAllowlist,
       config.trend.benchmarkSymbol,
       'YMAG',
+      ...SEMICONDUCTOR_INTELLIGENCE_SYMBOLS,
+      ...ENERGY_INTELLIGENCE_SYMBOLS,
+      ...SHIPPING_INTELLIGENCE_SYMBOLS,
+      ...TECHNOLOGY_INTELLIGENCE_SYMBOLS,
     ].map((symbol) => symbol.toUpperCase())),
   ];
   return new SchwabHybridMarketDataProvider(schwab, env, historySymbols);
@@ -183,22 +203,13 @@ export async function buildServerContext(options: { asOf?: string } = {}): Promi
   const fallback = (broker: 'robinhood' | 'schwab') => fallbackFromSource(storedSource, broker);
   const adapters = buildBrokerRegistry(process.env as Record<string, string | undefined>, fallback, {
     robinhoodGateway,
-    schwabTokenStore: {
-      loadRefreshToken: loadSchwabRefreshToken,
-      saveRefreshToken: saveSchwabRefreshToken,
-    },
+    schwabTokenStore: { loadRefreshToken: loadSchwabRefreshToken, saveRefreshToken: saveSchwabRefreshToken },
   });
 
   const converged = await convergeLiveBrokerState(storedSource, adapters);
   const mandated = applyAccountMandates(converged);
-  // The current stored schema predates an explicit "reserve amount entered"
-  // flag. Until a non-zero value is provided, treat zero as UNKNOWN rather than
-  // asserting that the household literally has no reserve.
   const source: PositionSource = config.externalLiquidityCurrent === 0
-    ? {
-        ...mandated,
-        notes: [...mandated.notes, 'External household liquidity has not been confirmed; reserve status is shown as not entered rather than $0 underfunded.'],
-      }
+    ? { ...mandated, notes: [...mandated.notes, 'External household liquidity has not been confirmed; reserve status is shown as not entered rather than $0 underfunded.'] }
     : mandated;
 
   const provider = selectMarketProvider(adapters, config);
@@ -220,7 +231,6 @@ export async function buildServerContext(options: { asOf?: string } = {}): Promi
   };
 }
 
-/** Config-only context, for endpoints that do not need market data. */
 export async function loadConfigOnly(): Promise<{ config: StrategyConfig; persisted: boolean; note: string | null }> {
   const { config, persisted, note } = await loadStrategyConfig();
   return { config, persisted, note };
