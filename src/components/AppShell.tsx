@@ -10,7 +10,7 @@ export const ROUTES = [
   { path: '/semiconductor', label: 'Semiconductor' },
   { path: '/opportunities', label: 'Opportunities' },
   { path: '/simulator', label: 'Simulator' },
-  { path: '/claude', label: 'Claude' },
+  { path: '/claude', label: 'Agent' },
   { path: '/activity', label: 'Activity' },
   { path: '/settings', label: 'Settings' },
 ] as const;
@@ -80,8 +80,8 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <footer className="footer">
         <p>
-          DAHCorp Finance · Phase 1 — Observer. Live order execution is disabled in this build. Nothing here is
-          investment advice.
+          DAHCorp Finance · Agentic strategy in Shadow Mode by default. Broker execution requires separate deterministic
+          gates and explicit investor authorization. Nothing here is investment advice.
         </p>
       </footer>
     </div>
