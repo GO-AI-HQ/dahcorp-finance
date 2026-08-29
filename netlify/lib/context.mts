@@ -41,13 +41,7 @@ function fallbackFromSource(source: PositionSource, broker: 'robinhood' | 'schwa
   };
 }
 
-/**
- * Replace stored/seed broker rows with the broker's own current account state.
- * A broker failure never erases the prior source; it leaves that lane unchanged
- * and adds a provenance note. Seed-only manual fixtures are dropped once at
- * least one real brokerage is live, because demonstration assets must not sit
- * beside real money as though they were part of the investor's balance sheet.
- */
+/** Replace stored/seed broker rows with the broker's own current account state. */
 async function convergeLiveBrokerState(source: PositionSource, adapters: BrokerAdapter[]): Promise<PositionSource> {
   let accounts = source.origin === 'seed' ? source.accounts.filter((account) => account.broker !== 'manual') : [...source.accounts];
   let holdings = source.origin === 'seed'
@@ -76,13 +70,16 @@ async function convergeLiveBrokerState(source: PositionSource, adapters: BrokerA
       accounts.push(...data.accounts);
       holdings.push(...data.holdings.map((holding) => {
         const instrument = getInstrumentOrFallback(holding.symbol);
+        const costBasisKnown = holding.costBasisKnown ?? holding.costBasisTotal > 0;
         return {
           ...holding,
           sleeve: instrument.sleeve,
-          // The verified broker cost basis is the initial principal watermark
-          // for tactical products unless the investor later sets a fixed one.
+          costBasisKnown,
+          // A missing broker basis is never silently promoted to a tactical
+          // principal watermark. A later investor-set fixed watermark may still
+          // provide an explicit strategy reference.
           tacticalCostBasisTotal:
-            instrument.leverage > 1
+            instrument.leverage > 1 && costBasisKnown
               ? (holding.tacticalCostBasisTotal ?? holding.costBasisTotal)
               : holding.tacticalCostBasisTotal,
           verification: 'CONFIRMED' as const,
@@ -98,8 +95,6 @@ async function convergeLiveBrokerState(source: PositionSource, adapters: BrokerA
 
   if (!liveBrokers.size) return source;
 
-  // Once real brokerage data exists, remove any remaining seed broker fixtures
-  // that were not replaced. A missing broker is safer as missing than synthetic.
   if (source.origin === 'seed') {
     const liveIds = new Set(accounts.filter((account) => account.dataQuality === 'live').map((account) => account.id));
     accounts = accounts.filter((account) => liveIds.has(account.id));
@@ -120,24 +115,13 @@ async function convergeLiveBrokerState(source: PositionSource, adapters: BrokerA
     holdings,
     incomeEvents,
     contributions,
-    // Seed corporate actions are synthetic test fixtures and must never alter
-    // production broker history. Persisted investor-entered actions are kept.
     corporateActions: source.origin === 'seed' ? [] : source.corporateActions,
     notes: [...new Set(notes.filter((note) => !note.startsWith('Positions are seeded MOCK fixtures')))],
     containsMockData: accounts.some((account) => account.dataQuality === 'mock'),
   };
 }
 
-/**
- * Brokerage visibility is not spending authority.
- *
- * Robinhood MCP already restricts allocation to the Agentic account. Schwab's
- * Trader API can expose several taxable accounts, but the Income mandate should
- * not silently absorb cash from unrelated accounts. Until an explicit account
- * mandate setting exists, only the Schwab account that actually holds YMAG is
- * allocation-authorized for the Income Engine. Every other Schwab account stays
- * visible on the household balance sheet but contributes $0 to investable cash.
- */
+/** Brokerage visibility is not spending authority. */
 export function applyAccountMandates(source: PositionSource): PositionSource {
   const schwabIncomeAccounts = new Set(
     source.holdings
@@ -168,12 +152,6 @@ export function applyAccountMandates(source: PositionSource): PositionSource {
   };
 }
 
-/**
- * Prefer Schwab Market Data Production when the connected Schwab adapter is
- * available. It supplies live quotes for the whole watched universe and live
- * daily history for the strategy allowlist. Distribution history remains the
- * explicitly-labelled synthetic fallback for now.
- */
 export function selectMarketProvider(
   adapters: BrokerAdapter[],
   config: StrategyConfig,
@@ -212,10 +190,25 @@ export async function buildServerContext(options: { asOf?: string } = {}): Promi
   });
 
   const converged = await convergeLiveBrokerState(storedSource, adapters);
-  const source = applyAccountMandates(converged);
+  const mandated = applyAccountMandates(converged);
+  // The current stored schema predates an explicit "reserve amount entered"
+  // flag. Until a non-zero value is provided, treat zero as UNKNOWN rather than
+  // asserting that the household literally has no reserve.
+  const source: PositionSource = config.externalLiquidityCurrent === 0
+    ? {
+        ...mandated,
+        notes: [...mandated.notes, 'External household liquidity has not been confirmed; reserve status is shown as not entered rather than $0 underfunded.'],
+      }
+    : mandated;
+
   const provider = selectMarketProvider(adapters, config);
   const snapshot = await buildPortfolioSnapshot({ asOf, provider, source });
   const analysisContext = buildAnalysisContext(snapshot, config);
+
+  if (config.externalLiquidityCurrent === 0) {
+    analysisContext.analysis.totals.externalLiquidityGap = 0;
+    analysisContext.analysis.totals.externalReserveUnderfunded = false;
+  }
 
   return {
     ...analysisContext,
