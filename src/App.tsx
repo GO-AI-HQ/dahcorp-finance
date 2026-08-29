@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useSession } from './hooks/useSession.js';
 import { AppShell } from './components/AppShell.js';
 import { LoginScreen } from './components/LoginScreen.js';
@@ -13,6 +13,18 @@ import { ModelingLab } from './pages/ModelingLab.js';
 import { ClaudeConsole } from './pages/ClaudeConsole.js';
 import { Activity } from './pages/Activity.js';
 import { Settings } from './pages/Settings.js';
+
+function StrategyLabRoute() {
+  const location = useLocation();
+  const params = new URLSearchParams(location.search);
+  if (params.get('event')) {
+    const next = new URLSearchParams();
+    next.set('event', params.get('event')!);
+    next.set('question', 'What should this intelligence event change in my portfolio, if anything? Compare the current plan with a concrete BUY, SELL, rotation or HOLD CASH alternative.');
+    return <Navigate to={`/modeling-lab?${next.toString()}`} replace />;
+  }
+  return <StrategyLab />;
+}
 
 export function App() {
   const { session, loading, error } = useSession();
@@ -42,7 +54,7 @@ export function App() {
         <Route path="/portfolio" element={<PortfolioV2 />} />
         <Route path="/growth" element={<Growth />} />
         <Route path="/intelligence" element={<Intelligence />} />
-        <Route path="/strategy-lab" element={<StrategyLab />} />
+        <Route path="/strategy-lab" element={<StrategyLabRoute />} />
         <Route path="/modeling-lab" element={<ModelingLab />} />
         <Route path="/agent" element={<ClaudeConsole />} />
         <Route path="/activity" element={<Activity />} />
