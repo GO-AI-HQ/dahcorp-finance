@@ -55,14 +55,32 @@ export interface RobinhoodStatusResponse {
   note: string;
 }
 
+export type RobinhoodOrderSide = 'buy' | 'sell';
+export type RobinhoodOrderSizing = 'quantity' | 'notional';
+
+export interface RobinhoodPreviewRequest {
+  accountId: string;
+  symbol: string;
+  side: RobinhoodOrderSide;
+  quantity?: number;
+  notional?: number;
+  rationale?: string;
+  recommendationId?: number | null;
+}
+
 export interface RobinhoodTradePreviewResponse {
   approved: boolean;
   previewId: number | null;
   symbol: string;
+  side: RobinhoodOrderSide;
+  sizing: RobinhoodOrderSizing;
+  requestedNotional: number | null;
   account: { id: string; name: string; cash: number };
   quote: RobinhoodQuoteResponse;
   quantity: number;
+  heldQuantity: number;
   estimatedTotal: number;
+  fractionalTradable: boolean | null;
   findings: RiskFinding[];
   brokerPreview?: {
     accepted: boolean;
@@ -80,6 +98,9 @@ export interface RobinhoodExecutionResponse {
   executed: true;
   previewId: number;
   symbol: string;
+  side: RobinhoodOrderSide;
+  sizing: RobinhoodOrderSizing;
+  requestedNotional: number | null;
   quantity: number;
   estimatedNotional: number;
   quote: RobinhoodQuoteResponse;
@@ -93,9 +114,9 @@ export const robinhoodApi = {
     method: 'POST',
     body: JSON.stringify({ callbackUrl }),
   }),
-  preview: (accountId: string, quantity: number, symbol = 'NVDY') => request<RobinhoodTradePreviewResponse>('/robinhood-trade-preview', {
+  preview: (input: RobinhoodPreviewRequest) => request<RobinhoodTradePreviewResponse>('/robinhood-trade-preview', {
     method: 'POST',
-    body: JSON.stringify({ accountId, quantity, symbol }),
+    body: JSON.stringify(input),
   }),
   execute: (previewId: number, confirmation: string) => request<RobinhoodExecutionResponse>('/robinhood-order-execute', {
     method: 'POST',
