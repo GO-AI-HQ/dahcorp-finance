@@ -21,6 +21,7 @@ export interface ShadowDecisionInput {
 export interface ShadowEvidenceSummary {
   totalObservations: number;
   distinctMarketDays: number;
+  observationsWithOutcome: number;
   actionCounts: Record<string, number>;
   symbolCounts: Record<string, number>;
   latest: Array<{
@@ -72,7 +73,14 @@ export async function saveShadowDecisions(inputs: ShadowDecisionInput[]): Promis
 export async function loadShadowEvidence(limit = 12): Promise<ShadowEvidenceSummary> {
   const db = getDb();
   if (!db) {
-    return { totalObservations: 0, distinctMarketDays: 0, actionCounts: {}, symbolCounts: {}, latest: [] };
+    return {
+      totalObservations: 0,
+      distinctMarketDays: 0,
+      observationsWithOutcome: 0,
+      actionCounts: {},
+      symbolCounts: {},
+      latest: [],
+    };
   }
 
   // The ledger is intentionally small in this phase. Pulling the latest 2,000
@@ -87,15 +95,18 @@ export async function loadShadowEvidence(limit = 12): Promise<ShadowEvidenceSumm
   const actionCounts: Record<string, number> = {};
   const symbolCounts: Record<string, number> = {};
   const marketDays = new Set<string>();
+  let observationsWithOutcome = 0;
   for (const row of rows) {
     marketDays.add(row.marketDate);
     actionCounts[row.action] = (actionCounts[row.action] ?? 0) + 1;
     symbolCounts[row.symbol] = (symbolCounts[row.symbol] ?? 0) + 1;
+    if (row.outcome != null) observationsWithOutcome += 1;
   }
 
   return {
     totalObservations: rows.length,
     distinctMarketDays: marketDays.size,
+    observationsWithOutcome,
     actionCounts,
     symbolCounts,
     latest: rows.slice(0, Math.max(1, limit)).map((row) => ({
