@@ -10,6 +10,7 @@ export const ROUTES = [
   { path: '/growth', label: 'Growth' },
   { path: '/intelligence', label: 'Intelligence' },
   { path: '/strategy-lab', label: 'Strategy Lab' },
+  { path: '/modeling-lab', label: 'Modeling Lab' },
   { path: '/agent', label: 'Agent' },
   { path: '/activity', label: 'Activity' },
   { path: '/settings', label: 'Settings' },
@@ -32,9 +33,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="shell">
-      <a className="skip-link" href="#main">
-        Skip to content
-      </a>
+      <a className="skip-link" href="#main">Skip to content</a>
 
       <header className="nav">
         <div className="nav__inner">
@@ -52,31 +51,18 @@ export function AppShell({ children }: { children: ReactNode }) {
           </nav>
 
           <div className="nav__actions">
-            {demo ? (
-              <Badge tone="warning" glyph="▲" title="Read-only demonstration session">
-                Demo
-              </Badge>
-            ) : null}
+            {demo ? <Badge tone="warning" glyph="▲" title="Read-only demonstration session">Demo</Badge> : null}
             {countdown ? (
-              <Badge
-                tone={expiringSoon ? 'negative' : 'neutral'}
-                glyph={expiringSoon ? '!' : undefined}
-                title="Time remaining before this session expires"
-              >
-                <span className="sr-only">Session expires in </span>
-                {countdown}
+              <Badge tone={expiringSoon ? 'negative' : 'neutral'} glyph={expiringSoon ? '!' : undefined} title="Time remaining before this session expires">
+                <span className="sr-only">Session expires in </span>{countdown}
               </Badge>
             ) : null}
-            <button type="button" className="btn btn--sm btn--ghost" onClick={() => void signOut()}>
-              Log out
-            </button>
+            <button type="button" className="btn btn--sm btn--ghost" onClick={() => void signOut()}>Log out</button>
           </div>
         </div>
       </header>
 
-      <main className="main" id="main">
-        {children}
-      </main>
+      <main className="main" id="main">{children}</main>
 
       <footer className="footer">
         <p>

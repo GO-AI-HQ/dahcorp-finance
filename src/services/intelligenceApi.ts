@@ -1,7 +1,7 @@
-import type { IntelligencePayload } from '../intelligence/types.js';
+import type { HistoricalRelevance, IntelligenceEventType, IntelligencePayload, IntelligenceSector } from '../intelligence/types.js';
 import { ApiError } from './api.js';
 
-async function request(path: string): Promise<IntelligencePayload> {
+async function request<T>(path: string): Promise<T> {
   let response: Response;
   try {
     response = await fetch(`/.netlify/functions${path}`, {
@@ -23,10 +23,12 @@ async function request(path: string): Promise<IntelligencePayload> {
       body,
     );
   }
-  return body as unknown as IntelligencePayload;
+  return body as T;
 }
 
 export const intelligenceApi = {
-  current: () => request('/intelligence'),
-  refresh: () => request('/intelligence?refresh=1'),
+  current: () => request<IntelligencePayload>('/intelligence'),
+  refresh: () => request<IntelligencePayload>('/intelligence?refresh=1'),
+  historicalRelevance: (eventType: IntelligenceEventType, sector: IntelligenceSector) =>
+    request<HistoricalRelevance>(`/historical-relevance?eventType=${encodeURIComponent(eventType)}&sector=${encodeURIComponent(sector)}`),
 };

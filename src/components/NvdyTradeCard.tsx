@@ -1,15 +1,24 @@
 import { useMemo, useState } from 'react';
 import { ApiError } from '../services/api.js';
-import { robinhoodApi, type RobinhoodExecutionResponse, type RobinhoodTradePreviewResponse } from '../services/robinhoodApi.js';
+import {
+  robinhoodApi,
+  type RobinhoodExecutionResponse,
+  type RobinhoodOrderSide,
+  type RobinhoodOrderSizing,
+  type RobinhoodTradePreviewResponse,
+} from '../services/robinhoodApi.js';
 import { useResource } from '../hooks/useResource.js';
 import { Card } from './Card.js';
 import { Badge } from './Badge.js';
-import { formatMoney } from '../core/format.js';
+import { formatMoney, formatShares } from '../core/format.js';
 
 export function NvdyTradeCard() {
   const robinhood = useResource(() => robinhoodApi.status(), []);
   const [accountId, setAccountId] = useState('');
   const [symbol, setSymbol] = useState('NVDY');
+  const [side, setSide] = useState<RobinhoodOrderSide>('buy');
+  const [sizing, setSizing] = useState<RobinhoodOrderSizing>('notional');
+  const [notional, setNotional] = useState(8);
   const [quantity, setQuantity] = useState(1);
   const [preview, setPreview] = useState<RobinhoodTradePreviewResponse | null>(null);
   const [confirmation, setConfirmation] = useState('');
@@ -27,6 +36,13 @@ export function NvdyTradeCard() {
   );
   const activeSymbol = status?.allowlist.includes(symbol) ? symbol : status?.allowlist[0] ?? 'NVDY';
   const selectedQuote = status?.quotes?.[activeSymbol] ?? (activeSymbol === status?.symbol ? status?.quote : null);
+
+  function resetTradeState() {
+    setPreview(null);
+    setExecution(null);
+    setConfirmation('');
+    setMessage(null);
+  }
 
   async function completeAuthorization() {
     if (!callbackUrl.trim()) return;
@@ -50,7 +66,12 @@ export function NvdyTradeCard() {
     setExecution(null);
     setConfirmation('');
     try {
-      const result = await robinhoodApi.preview(selectedAccount.id, quantity, activeSymbol);
+      const result = await robinhoodApi.preview({
+        accountId: selectedAccount.id,
+        symbol: activeSymbol,
+        side,
+        ...(sizing === 'notional' ? { notional } : { quantity }),
+      });
       setPreview(result);
       if (!result.approved) setMessage('The deterministic Robinhood execution gate blocked this order.');
     } catch (error) {
@@ -154,13 +175,17 @@ export function NvdyTradeCard() {
       ? { tone: 'positive' as const, glyph: '✓', label: 'Human-approved live' }
       : { tone: 'warning' as const, glyph: '—', label: 'Read only' };
 
+  const previewLabel = sizing === 'notional'
+    ? `${side.toUpperCase()} ${formatMoney(notional)} ${activeSymbol}`
+    : `${side.toUpperCase()} ${formatShares(quantity)} ${activeSymbol}`;
+
   return (
     <Card
       label="Robinhood Agentic"
       title="Growth strategy execution"
       tone="accent"
       action={<Badge tone={badge.tone} glyph={badge.glyph}>{badge.label}</Badge>}
-      hint="Robinhood Agentic is the active growth/tactical lane. Cash can wait in queue; a deposit never forces a purchase. Live tactical sells remain disabled while Shadow Mode validates the recycling engine."
+      hint="Robinhood Agentic is the live Growth/tactical lane. A deposit never forces a purchase. Every BUY or SELL still requires a fresh broker review, deterministic safeguards, a single-use preview and exact human confirmation."
     >
       <div className="grid grid--2" style={{ marginBottom: 16 }}>
         <div>
@@ -171,7 +196,7 @@ export function NvdyTradeCard() {
         <div>
           <p className="meta">Agentic cash queue</p>
           <p className="figure figure--sm">{selectedAccount ? formatMoney(selectedAccount.cash) : '—'}</p>
-          <p className="meta">Cash remains deployable only when a qualified strategy signal passes deterministic risk policy.</p>
+          <p className="meta">BUYs use only current Agentic buying power. SELLs are bounded by shares Robinhood reports in this account.</p>
         </div>
       </div>
 
@@ -182,8 +207,7 @@ export function NvdyTradeCard() {
             value={activeSymbol}
             onChange={(event) => {
               setSymbol(event.target.value);
-              setPreview(null);
-              setExecution(null);
+              resetTradeState();
             }}
           >
             {status.allowlist.map((item) => <option key={item} value={item}>{item}</option>)}
@@ -191,32 +215,69 @@ export function NvdyTradeCard() {
         </label>
         <label className="field">
           <span className="field__label">Robinhood account</span>
-          <select value={selectedId} onChange={(event) => { setAccountId(event.target.value); setPreview(null); }}>
+          <select value={selectedId} onChange={(event) => { setAccountId(event.target.value); resetTradeState(); }}>
             {status.accounts.map((account) => <option key={account.id} value={account.id} disabled={!account.tradeEligible}>{account.name}{account.tradeEligible ? ' · Agentic' : ' · read only'}</option>)}
           </select>
         </label>
       </div>
 
-      <div className="grid grid--2" style={{ alignItems: 'end', marginBottom: 14 }}>
+      <div className="grid grid--2" style={{ gap: 12, marginBottom: 12 }}>
         <label className="field">
-          <span className="field__label">Whole shares</span>
-          <input
-            type="number"
-            min={1}
-            step={1}
-            value={quantity}
-            disabled={!status.executionEnabled || busy}
-            onChange={(event) => {
-              const next = Number(event.target.value);
-              setQuantity(Number.isFinite(next) ? Math.max(1, Math.floor(next)) : 1);
-              setPreview(null);
-              setExecution(null);
-            }}
-          />
-          <span className="field__hint">Current live BUY surface is constrained to the approved Agentic strategy universe. Tactical selling stays Shadow-only for now.</span>
+          <span className="field__label">Action</span>
+          <select value={side} onChange={(event) => { setSide(event.target.value as RobinhoodOrderSide); resetTradeState(); }}>
+            <option value="buy">BUY</option>
+            <option value="sell">SELL</option>
+          </select>
+          <span className="field__hint">SELL never shorts: DAHCorp rechecks the live position immediately before placement.</span>
         </label>
+        <label className="field">
+          <span className="field__label">Size by</span>
+          <select value={sizing} onChange={(event) => { setSizing(event.target.value as RobinhoodOrderSizing); resetTradeState(); }}>
+            <option value="notional">Dollar amount</option>
+            <option value="quantity">Share quantity</option>
+          </select>
+          <span className="field__hint">Dollar sizing is converted to fractional shares using a fresh quote and re-sized again at final confirmation.</span>
+        </label>
+      </div>
+
+      <div className="grid grid--2" style={{ alignItems: 'end', marginBottom: 14 }}>
+        {sizing === 'notional' ? (
+          <label className="field">
+            <span className="field__label">Dollar amount</span>
+            <input
+              type="number"
+              min={0.01}
+              step={0.01}
+              value={notional}
+              disabled={!status.executionEnabled || busy}
+              onChange={(event) => {
+                const next = Number(event.target.value);
+                setNotional(Number.isFinite(next) ? Math.max(0.01, next) : 0.01);
+                resetTradeState();
+              }}
+            />
+            <span className="field__hint">Useful for small live validation such as an $8 recommendation. Final shares depend on the live quote.</span>
+          </label>
+        ) : (
+          <label className="field">
+            <span className="field__label">Shares</span>
+            <input
+              type="number"
+              min={0.000001}
+              step={0.000001}
+              value={quantity}
+              disabled={!status.executionEnabled || busy}
+              onChange={(event) => {
+                const next = Number(event.target.value);
+                setQuantity(Number.isFinite(next) ? Math.max(0.000001, next) : 0.000001);
+                resetTradeState();
+              }}
+            />
+            <span className="field__hint">Fractional quantities are checked against Robinhood tradability before broker review.</span>
+          </label>
+        )}
         <button className="btn btn--gold btn--block" type="button" disabled={!status.executionEnabled || !selectedAccount?.tradeEligible || !selectedQuote || busy} onClick={createPreview}>
-          {busy ? 'Checking…' : `Preview ${activeSymbol} buy`}
+          {busy ? 'Checking…' : `Preview ${previewLabel}`}
         </button>
       </div>
 
@@ -228,15 +289,21 @@ export function NvdyTradeCard() {
         <div className={`banner ${preview.approved ? 'banner--intel' : 'banner--risk'}`} style={{ marginTop: 14 }}>
           <span className="banner__glyph">{preview.approved ? '✓' : '!'}</span>
           <div style={{ width: '100%' }}>
-            <strong className="banner__title">{preview.quantity} {preview.symbol} · estimated {formatMoney(preview.estimatedTotal)}</strong>
-            <p className="meta" style={{ marginTop: 4 }}>Live price {formatMoney(preview.quote.price)} · preview expires in 5 minutes. Market orders can fill at a different price.</p>
+            <strong className="banner__title">
+              {preview.side.toUpperCase()} {formatShares(preview.quantity)} {preview.symbol} · estimated {formatMoney(preview.estimatedTotal)}
+            </strong>
+            <p className="meta" style={{ marginTop: 4 }}>
+              {preview.sizing === 'notional' && preview.requestedNotional != null ? `Requested ${formatMoney(preview.requestedNotional)} · ` : ''}
+              Live price {formatMoney(preview.quote.price)} · preview expires in 5 minutes. Market orders can fill at a different price.
+            </p>
+            {preview.side === 'sell' ? <p className="meta">Robinhood currently reports {formatShares(preview.heldQuantity)} {preview.symbol} shares in this Agentic account.</p> : null}
             {preview.brokerPreview?.warnings.map((warning) => <p key={warning} className="meta" style={{ marginTop: 4 }}>{warning}</p>)}
             {preview.findings.filter((finding) => finding.severity === 'block').map((finding) => <p key={finding.code} className="meta" style={{ marginTop: 4 }}>{finding.message}</p>)}
             {preview.approved && preview.previewId && preview.confirmationText ? (
               <div style={{ marginTop: 12 }}>
                 <label className="field"><span className="field__label">Type {preview.confirmationText} to place this order</span><input type="text" autoComplete="off" value={confirmation} disabled={busy} onChange={(event) => setConfirmation(event.target.value)} /></label>
                 <button className="btn btn--danger" type="button" style={{ marginTop: 10 }} disabled={busy || confirmation.trim().toUpperCase() !== preview.confirmationText} onClick={execute}>
-                  {busy ? 'Submitting…' : `Confirm & place ${preview.symbol} order`}
+                  {busy ? 'Submitting…' : `Confirm & place ${preview.side.toUpperCase()} ${preview.symbol}`}
                 </button>
               </div>
             ) : null}
@@ -244,7 +311,15 @@ export function NvdyTradeCard() {
         </div>
       ) : null}
 
-      {execution ? <div className="banner" style={{ marginTop: 14 }}><span className="banner__glyph">✓</span><div><strong className="banner__title">Order submitted to Robinhood</strong>{execution.note}</div></div> : null}
+      {execution ? (
+        <div className="banner" style={{ marginTop: 14 }}>
+          <span className="banner__glyph">✓</span>
+          <div>
+            <strong className="banner__title">{execution.side.toUpperCase()} order submitted to Robinhood</strong>
+            {execution.note}
+          </div>
+        </div>
+      ) : null}
       {message ? <p className="meta" style={{ marginTop: 10 }}>{message}</p> : null}
     </Card>
   );

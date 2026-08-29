@@ -22,7 +22,7 @@ export interface RobinhoodMcpTool {
   description?: string;
   inputSchema?: {
     type?: string;
-    properties?: Record<string, { type?: string; [key: string]: unknown }>;
+    properties?: Record<string, { type?: string; items?: { type?: string }; [key: string]: unknown }>;
     required?: string[];
     [key: string]: unknown;
   };
@@ -86,7 +86,7 @@ export function readRobinhoodConfig(env: Record<string, string | undefined>): Ro
 function toNumber(value: unknown): number {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
   if (typeof value === 'string') {
-    const parsed = Number(value);
+    const parsed = Number(value.replace(/[$,%]/g, '').trim());
     return Number.isFinite(parsed) ? parsed : 0;
   }
   return 0;
@@ -136,6 +136,41 @@ function schemaValue(tool: RobinhoodMcpTool | undefined, key: string, value: str
   return value;
 }
 
+function boolLike(value: unknown): boolean | null {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value === 1 ? true : value === 0 ? false : null;
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  if (['true', 'yes', 'eligible', 'enabled', 'tradable', 'fractional', 'fractionable', 'supported'].includes(normalized)) return true;
+  if (['false', 'no', 'ineligible', 'disabled', 'not_tradable', 'not tradable', 'not supported', 'unsupported'].includes(normalized)) return false;
+  if (/not\s+(eligible|fractional|fractionable|tradable|supported)/i.test(normalized)) return false;
+  return null;
+}
+
+function fractionalFlag(value: unknown): boolean | null {
+  if (!value || typeof value !== 'object') return boolLike(value);
+  const row = value as Record<string, unknown>;
+  const keys = [
+    'fractional_tradability',
+    'fractional_trading_enabled',
+    'fractional_enabled',
+    'fractionable',
+    'is_fractional',
+    'supports_fractional',
+    'fractional',
+  ];
+  for (const key of keys) {
+    if (!(key in row)) continue;
+    const parsed = boolLike(row[key]);
+    if (parsed != null) return parsed;
+    if (row[key] && typeof row[key] === 'object') {
+      const nested = fractionalFlag(row[key]);
+      if (nested != null) return nested;
+    }
+  }
+  return null;
+}
+
 export class RobinhoodAdapter implements BrokerAdapter {
   readonly id = 'robinhood' as const;
   readonly label = 'Robinhood';
@@ -173,7 +208,7 @@ export class RobinhoodAdapter implements BrokerAdapter {
           : this.config.mode === 'manual'
             ? 'Robinhood positions are maintained manually.'
             : this.config.executionEnabled
-              ? `Official Robinhood Trading MCP connected; guarded BUY execution is available only for ${ROBINHOOD_MAX_EXECUTION_SYMBOLS.join(', ')}.`
+              ? `Official Robinhood Trading MCP connected; guarded human-confirmed BUY/SELL execution is available only for ${ROBINHOOD_MAX_EXECUTION_SYMBOLS.join(', ')}.`
               : 'Official Robinhood Trading MCP connected read-only; Agentic execution is not armed.',
     };
   }
@@ -184,8 +219,12 @@ export class RobinhoodAdapter implements BrokerAdapter {
     return this.tools;
   }
 
+  private async optionalTool(name: string): Promise<RobinhoodMcpTool | null> {
+    return (await this.availableTools()).find((item) => item.name === name) ?? null;
+  }
+
   private async tool(name: string): Promise<RobinhoodMcpTool> {
-    const found = (await this.availableTools()).find((item) => item.name === name);
+    const found = await this.optionalTool(name);
     if (!found) throw new Error(`Robinhood MCP does not expose required tool ${name}.`);
     return found;
   }
@@ -237,10 +276,7 @@ export class RobinhoodAdapter implements BrokerAdapter {
   }
 
   private async portfolioCash(raw: RawAccount, accountNumber: string): Promise<number> {
-    const fallbackBuyingPower =
-      typeof raw.buying_power === 'object' && raw.buying_power
-        ? toNumber(raw.buying_power.buying_power)
-        : toNumber(raw.buying_power);
+    const fallbackBuyingPower = typeof raw.buying_power === 'object' && raw.buying_power ? toNumber(raw.buying_power.buying_power) : toNumber(raw.buying_power);
     try {
       const tool = await this.tool('get_portfolio');
       const properties = tool.inputSchema?.properties ?? {};
@@ -258,6 +294,72 @@ export class RobinhoodAdapter implements BrokerAdapter {
       return cash || fallbackBuyingPower || toNumber(raw.cash);
     } catch {
       return fallbackBuyingPower || toNumber(raw.cash);
+    }
+  }
+
+  private async taxLotBasis(accountNumber: string, symbol: string): Promise<{ total: number; known: boolean }> {
+    if (!this.gateway) return { total: 0, known: false };
+    const tool = await this.optionalTool('get_equity_tax_lots');
+    if (!tool) return { total: 0, known: false };
+    const properties = tool.inputSchema?.properties ?? {};
+    const args: Record<string, unknown> = {};
+    if ('account_number' in properties) args.account_number = accountNumber;
+    if ('symbol' in properties) args.symbol = symbol;
+    if ('symbols' in properties) {
+      args.symbols = properties.symbols?.type === 'array' ? [symbol] : symbol;
+    }
+    try {
+      const payload = await this.gateway.callTool('get_equity_tax_lots', args);
+      const rows = arrayAt(payload, 'tax_lots', 'lots', 'results');
+      let total = 0;
+      let found = false;
+      for (const item of rows) {
+        if (!item || typeof item !== 'object') continue;
+        const row = item as Record<string, unknown>;
+        const rowSymbol = String(row.symbol ?? row.instrument_symbol ?? symbol).toUpperCase();
+        if (rowSymbol !== symbol) continue;
+        const quantity = toNumber(row.quantity ?? row.shares ?? row.open_quantity ?? row.remaining_quantity);
+        const directCost = toNumber(row.cost_basis ?? row.total_cost ?? row.cost_basis_total ?? row.total_cost_basis);
+        if (directCost > 0) {
+          total += directCost;
+          found = true;
+          continue;
+        }
+        const perShare = toNumber(row.cost_per_share ?? row.price ?? row.average_price ?? row.adjusted_cost_per_share);
+        if (quantity > 0 && perShare > 0) {
+          total += quantity * perShare;
+          found = true;
+        }
+      }
+      return { total, known: found && total > 0 };
+    } catch {
+      return { total: 0, known: false };
+    }
+  }
+
+  async getFractionalTradability(symbol: string): Promise<boolean | null> {
+    if (this.config.mode !== 'live' || !this.gateway) return null;
+    const normalized = symbol.toUpperCase().trim();
+    const tool = await this.optionalTool('get_equity_tradability');
+    if (!tool) return null;
+    const properties = tool.inputSchema?.properties ?? {};
+    const args: Record<string, unknown> = {};
+    if ('symbol' in properties) args.symbol = normalized;
+    if ('symbols' in properties) args.symbols = properties.symbols?.type === 'array' ? [normalized] : normalized;
+    try {
+      const payload = await this.gateway.callTool('get_equity_tradability', args);
+      const rows = arrayAt(payload, 'results', 'instruments', 'tradability');
+      for (const item of rows) {
+        if (!item || typeof item !== 'object') continue;
+        const row = item as Record<string, unknown>;
+        const rowSymbol = String(row.symbol ?? row.instrument_symbol ?? normalized).toUpperCase();
+        if (rowSymbol !== normalized) continue;
+        const parsed = fractionalFlag(row);
+        if (parsed != null) return parsed;
+      }
+      return fractionalFlag(nestedData(payload));
+    } catch {
+      return null;
     }
   }
 
@@ -313,20 +415,24 @@ export class RobinhoodAdapter implements BrokerAdapter {
         if (!symbol || shares <= 0) continue;
         const accountNumber = raw.account_number?.trim() || raw.account_id?.trim() || entry.accountNumber;
         const accountId = accountNumber ? accountMap.get(accountNumber) : accounts.length === 1 ? accounts[0]?.id : undefined;
-        if (!accountId) continue; // Never guess which account owns a position.
+        if (!accountId) continue;
         const key = `${accountId}:${symbol}`;
         if (seen.has(key)) continue;
         seen.add(key);
+
         const average = toNumber(raw.average_buy_price ?? raw.average_cost);
+        const lotBasis = average > 0 || !accountNumber ? { total: 0, known: false } : await this.taxLotBasis(accountNumber, symbol);
+        const costBasisKnown = average > 0 || lotBasis.known;
+        const costBasisTotal = average > 0 ? average * shares : lotBasis.total;
         const instrument = getInstrumentOrFallback(symbol);
-        const costBasisTotal = average * shares;
         holdings.push({
           id: key,
           accountId,
           symbol,
           shares,
           costBasisTotal,
-          tacticalCostBasisTotal: instrument.leverage > 1 ? costBasisTotal : undefined,
+          costBasisKnown,
+          tacticalCostBasisTotal: instrument.leverage > 1 && costBasisKnown ? costBasisTotal : undefined,
           sleeve: sleeveFor(symbol),
           legacy: false,
           verification: 'CONFIRMED',
@@ -359,19 +465,26 @@ export class RobinhoodAdapter implements BrokerAdapter {
 
   private async orderArgs(toolName: 'review_equity_order' | 'place_equity_order', order: ProposedOrder): Promise<Record<string, unknown>> {
     const symbol = order.symbol.toUpperCase().trim();
-    if (!ROBINHOOD_MAX_EXECUTION_SYMBOLS.includes(symbol as (typeof ROBINHOOD_MAX_EXECUTION_SYMBOLS)[number]) || order.side !== 'buy' || order.orderType !== 'market') {
-      throw new Error(`Robinhood execution transport is hard-allowlisted to BUY market orders in: ${ROBINHOOD_MAX_EXECUTION_SYMBOLS.join(', ')}.`);
+    if (!ROBINHOOD_MAX_EXECUTION_SYMBOLS.includes(symbol as (typeof ROBINHOOD_MAX_EXECUTION_SYMBOLS)[number]) || order.orderType !== 'market') {
+      throw new Error(`Robinhood execution transport is hard-allowlisted to market orders in: ${ROBINHOOD_MAX_EXECUTION_SYMBOLS.join(', ')}.`);
     }
-    if (typeof order.quantity !== 'number' || !Number.isInteger(order.quantity) || order.quantity <= 0) {
-      throw new Error('Robinhood live execution currently requires a positive whole-share quantity.');
+    if (typeof order.quantity !== 'number' || !Number.isFinite(order.quantity) || order.quantity <= 0) {
+      throw new Error('Robinhood live execution requires a positive finite share quantity.');
     }
+    if (order.side !== 'buy' && order.side !== 'sell') throw new Error('Robinhood live execution supports BUY or SELL only.');
+    const fractional = Math.abs(order.quantity - Math.round(order.quantity)) > 1e-9;
+    if (fractional) {
+      const tradable = await this.getFractionalTradability(symbol);
+      if (tradable === false) throw new Error(`${symbol} is not currently eligible for fractional trading according to Robinhood.`);
+    }
+
     const { accountNumber } = await this.accountNumberFor(order.accountId, true);
     const tool = await this.tool(toolName);
     const properties = tool.inputSchema?.properties ?? {};
     const args: Record<string, unknown> = {};
     if ('account_number' in properties) args.account_number = accountNumber;
     if ('symbol' in properties) args.symbol = symbol;
-    if ('side' in properties) args.side = 'buy';
+    if ('side' in properties) args.side = order.side;
     if ('order_type' in properties) args.order_type = 'market';
     if ('type' in properties) args.type = 'market';
     if ('quantity' in properties) args.quantity = schemaValue(tool, 'quantity', order.quantity);
@@ -410,17 +523,13 @@ export class RobinhoodAdapter implements BrokerAdapter {
     const data = nestedData(payload);
     const rawOrder = (data.order && typeof data.order === 'object' ? data.order : data) as Record<string, unknown>;
     const state = String(rawOrder.state ?? rawOrder.status ?? 'pending').toLowerCase();
-    const status: OrderStatus['status'] =
-      state.includes('fill') && !state.includes('partial') ? 'filled' :
-      state.includes('partial') ? 'partial' :
-      state.includes('reject') || state.includes('fail') ? 'rejected' :
-      state.includes('cancel') ? 'cancelled' : 'pending';
+    const status: OrderStatus['status'] = state.includes('fill') && !state.includes('partial') ? 'filled' : state.includes('partial') ? 'partial' : state.includes('reject') || state.includes('fail') ? 'rejected' : state.includes('cancel') ? 'cancelled' : 'pending';
     return {
       brokerOrderId: typeof rawOrder.id === 'string' ? rawOrder.id : typeof rawOrder.order_id === 'string' ? rawOrder.order_id : null,
       status,
       filledShares: toNumber(rawOrder.cumulative_quantity ?? rawOrder.filled_quantity),
       filledAveragePrice: toNumber(rawOrder.average_price ?? rawOrder.filled_average_price) || null,
-      message: `Robinhood accepted the ${order.symbol.toUpperCase()} order request with status ${status}.`,
+      message: `Robinhood accepted the ${order.side.toUpperCase()} ${order.symbol.toUpperCase()} order request with status ${status}.`,
     };
   }
 

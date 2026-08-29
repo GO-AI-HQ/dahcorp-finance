@@ -11,58 +11,81 @@ export interface AgentRequest {
   digest: AgentDigest;
   capital: number;
   config: StrategyConfig;
-  /** Optional evidence layers become prompt variables as they come online. */
   shadowEvidence?: unknown;
   eventIntelligence?: unknown;
   claudeResearchBrief?: unknown;
-  /** Returned verbatim when the selected model cannot be reached or fails validation. */
   deterministicBrief: RecommendationBrief;
 }
 
 interface OpenAIResponsesPayload {
-  output?: Array<{
-    type?: string;
-    name?: string;
-    arguments?: string;
-  }>;
-  usage?: {
-    input_tokens?: number;
-    output_tokens?: number;
-  };
+  output?: Array<{ type?: string; name?: string; arguments?: string }>;
+  usage?: { input_tokens?: number; output_tokens?: number };
 }
 
 const DEFAULT_OPENAI_MODEL = 'gpt-5.6-terra';
 const DEFAULT_OPENAI_PROMPT_ID = 'pmpt_6a9286ff3dbc8190b8c15ef4da2e001b0302504ca0de38ab';
 const DEFAULT_OPENAI_PROMPT_VERSION = '1';
 
-function configuredProvider(env: NodeJS.ProcessEnv = process.env): AgentProvider {
-  const value = env.DAHCORP_AGENT_PROVIDER?.trim().toLowerCase();
+/**
+ * Netlify runtime values are authoritative in production. process.env remains a
+ * test/local fallback so core modules can be unit-tested outside Netlify.
+ */
+function envValue(key: string, env?: NodeJS.ProcessEnv): string | undefined {
+  if (env) return env[key];
+  try {
+    const value = Netlify.env.get(key);
+    if (value != null) return value;
+  } catch {
+    // Local unit tests do not always expose the Netlify global.
+  }
+  return process.env[key];
+}
+
+/**
+ * Secret managers sometimes receive values copied as `Bearer sk-...` or with
+ * surrounding quotes. The Authorization header itself adds `Bearer`, so strip
+ * those presentation wrappers without ever logging or returning the secret.
+ */
+function normalizeSecret(value: string | undefined): string | null {
+  if (!value) return null;
+  let normalized = value.trim();
+  if ((normalized.startsWith('"') && normalized.endsWith('"')) || (normalized.startsWith("'") && normalized.endsWith("'"))) {
+    normalized = normalized.slice(1, -1).trim();
+  }
+  normalized = normalized.replace(/^Bearer\s+/i, '').trim();
+  return normalized || null;
+}
+
+function configuredProvider(env?: NodeJS.ProcessEnv): AgentProvider {
+  const value = envValue('DAHCORP_AGENT_PROVIDER', env)?.trim().toLowerCase();
   if (value === 'claude' || value === 'deterministic') return value;
   return 'openai';
 }
 
-function openAIKey(env: NodeJS.ProcessEnv = process.env): string | null {
-  return env.DAHCORP_SERVICE_ACCOUNT_OPENAI_KEY?.trim() || env.OPENAI_API_KEY?.trim() || null;
+function openAIKey(env?: NodeJS.ProcessEnv): string | null {
+  return normalizeSecret(envValue('DAHCORP_SERVICE_ACCOUNT_OPENAI_KEY', env) || envValue('OPENAI_API_KEY', env));
 }
 
-function openAIAvailable(env: NodeJS.ProcessEnv = process.env): boolean {
+function openAIAvailable(env?: NodeJS.ProcessEnv): boolean {
   return Boolean(openAIKey(env));
 }
 
-function openAIModel(env: NodeJS.ProcessEnv = process.env): string {
-  return env.OPENAI_MODEL?.trim() || env.OPENAI_AGENT_MODEL?.trim() || DEFAULT_OPENAI_MODEL;
+function openAIModel(env?: NodeJS.ProcessEnv): string {
+  return envValue('OPENAI_MODEL', env)?.trim() || envValue('OPENAI_AGENT_MODEL', env)?.trim() || DEFAULT_OPENAI_MODEL;
 }
 
-function openAIPromptId(env: NodeJS.ProcessEnv = process.env): string {
-  return env.OPENAI_PROMPT_ID?.trim() || DEFAULT_OPENAI_PROMPT_ID;
+function openAIPromptId(env?: NodeJS.ProcessEnv): string {
+  // OPEN_AI_PROMPT_ID is retained as a compatibility alias for the original
+  // Netlify variable name used during the Prompt-ID rollout.
+  return envValue('OPENAI_PROMPT_ID', env)?.trim() || envValue('OPEN_AI_PROMPT_ID', env)?.trim() || DEFAULT_OPENAI_PROMPT_ID;
 }
 
-function openAIPromptVersion(env: NodeJS.ProcessEnv = process.env): string {
-  return env.OPENAI_PROMPT_VERSION?.trim() || DEFAULT_OPENAI_PROMPT_VERSION;
+function openAIPromptVersion(env?: NodeJS.ProcessEnv): string {
+  return envValue('OPENAI_PROMPT_VERSION', env)?.trim() || DEFAULT_OPENAI_PROMPT_VERSION;
 }
 
-function openAIResponsesEndpoint(env: NodeJS.ProcessEnv = process.env): string {
-  const base = (env.OPENAI_BASE_URL?.trim() || 'https://api.openai.com').replace(/\/$/, '');
+function openAIResponsesEndpoint(env?: NodeJS.ProcessEnv): string {
+  const base = (envValue('OPENAI_BASE_URL', env)?.trim() || 'https://api.openai.com').replace(/\/$/, '');
   return base.endsWith('/v1') ? `${base}/responses` : `${base}/v1/responses`;
 }
 
@@ -72,17 +95,19 @@ function promptValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function safeOpenAIFailure(status: number): string {
+  if (status === 401) {
+    return 'OpenAI rejected the configured service-account credential. Confirm the Netlify DAHCORP_SERVICE_ACCOUNT_OPENAI_KEY is the secret value (not a label or a value prefixed with Bearer) and that the service account belongs to the same OpenAI project as the stored Treasury Strategist prompt.';
+  }
+  if (status === 403) return 'OpenAI authenticated the credential but the project/key is not permitted to use the requested resource or model.';
+  if (status === 404) return 'OpenAI authenticated the request but could not find the configured model or stored prompt in this project.';
+  if (status === 429) return 'OpenAI rate or project-spend limits prevented this request.';
+  if (status >= 500) return 'OpenAI is temporarily unavailable. The deterministic strategy brief is shown instead.';
+  return `The OpenAI request was rejected with status ${status}. The deterministic strategy brief is shown instead.`;
+}
+
 async function requestOpenAIRecommendation(request: AgentRequest): Promise<AgentResult> {
-  const {
-    question,
-    digest,
-    capital,
-    config,
-    deterministicBrief,
-    shadowEvidence,
-    eventIntelligence,
-    claudeResearchBrief,
-  } = request;
+  const { question, digest, capital, config, deterministicBrief, shadowEvidence, eventIntelligence, claudeResearchBrief } = request;
   const apiKey = openAIKey();
 
   if (!apiKey) {
@@ -123,15 +148,13 @@ async function requestOpenAIRecommendation(request: AgentRequest): Promise<Agent
             claude_research_brief: promptValue(claudeResearchBrief),
           },
         },
-        tools: [
-          {
-            type: 'function',
-            name: RECOMMENDATION_TOOL.name,
-            description: RECOMMENDATION_TOOL.description,
-            parameters: RECOMMENDATION_TOOL.input_schema,
-            strict: false,
-          },
-        ],
+        tools: [{
+          type: 'function',
+          name: RECOMMENDATION_TOOL.name,
+          description: RECOMMENDATION_TOOL.description,
+          parameters: RECOMMENDATION_TOOL.input_schema,
+          strict: false,
+        }],
         tool_choice: { type: 'function', name: RECOMMENDATION_TOOL.name },
         parallel_tool_calls: false,
         store: false,
@@ -139,37 +162,28 @@ async function requestOpenAIRecommendation(request: AgentRequest): Promise<Agent
     });
 
     if (!response.ok) {
-      // Do not log the response body: provider errors can echo request metadata.
+      // Provider bodies can echo request metadata. Only status class is logged.
       console.error(`[dahcorp] OpenAI Responses request failed with status ${response.status}.`);
       return {
         brief: deterministicBrief,
         source: 'deterministic',
         model,
-        fallbackReason: `The OpenAI request failed with status ${response.status}. The deterministic policy recommendation is shown instead.`,
+        fallbackReason: safeOpenAIFailure(response.status),
         usage: null,
       };
     }
 
     const payload = (await response.json()) as OpenAIResponsesPayload;
-    const call = payload.output?.find(
-      (item) => item.type === 'function_call' && item.name === RECOMMENDATION_TOOL.name,
-    );
+    const call = payload.output?.find((item) => item.type === 'function_call' && item.name === RECOMMENDATION_TOOL.name);
 
     let parsedInput: unknown = null;
     if (call?.arguments) {
-      try {
-        parsedInput = JSON.parse(call.arguments);
-      } catch {
-        parsedInput = null;
-      }
+      try { parsedInput = JSON.parse(call.arguments); } catch { parsedInput = null; }
     }
 
     const brief = parseRecommendation(parsedInput);
     const usage = payload.usage
-      ? {
-          inputTokens: payload.usage.input_tokens ?? 0,
-          outputTokens: payload.usage.output_tokens ?? 0,
-        }
+      ? { inputTokens: payload.usage.input_tokens ?? 0, outputTokens: payload.usage.output_tokens ?? 0 }
       : null;
 
     if (!brief) {
@@ -182,13 +196,7 @@ async function requestOpenAIRecommendation(request: AgentRequest): Promise<Agent
       };
     }
 
-    return {
-      brief,
-      source: 'openai',
-      model,
-      fallbackReason: null,
-      usage,
-    };
+    return { brief, source: 'openai', model, fallbackReason: null, usage };
   } catch (error) {
     console.error('[dahcorp] OpenAI agent request failed:', error instanceof Error ? error.message : 'unknown error');
     return {
@@ -201,11 +209,6 @@ async function requestOpenAIRecommendation(request: AgentRequest): Promise<Agent
   }
 }
 
-/**
- * Provider router. OpenAI is the default Treasury Strategist. Claude remains a
- * separate research provider. Missing or malformed model output always degrades
- * to the deterministic brief; neither provider can widen broker authority.
- */
 export async function requestAgentRecommendation(request: AgentRequest): Promise<AgentResult> {
   const provider = configuredProvider();
   if (provider === 'deterministic') {
@@ -221,19 +224,18 @@ export async function requestAgentRecommendation(request: AgentRequest): Promise
   return requestOpenAIRecommendation(request);
 }
 
-export function agentRuntimeStatus(env: NodeJS.ProcessEnv = process.env) {
+export function agentRuntimeStatus(env?: NodeJS.ProcessEnv) {
   const provider = configuredProvider(env);
   const anthropicAvailable = Boolean(
-    env.ANTHROPIC_WORKSPACE_KEY?.trim() || env.ANTHROPIC_API_KEY?.trim() || env.NETLIFY_AI_GATEWAY_KEY?.trim(),
+    normalizeSecret(envValue('ANTHROPIC_WORKSPACE_KEY', env) || envValue('ANTHROPIC_API_KEY', env) || envValue('NETLIFY_AI_GATEWAY_KEY', env)),
   );
   return {
     provider,
-    model:
-      provider === 'openai'
-        ? openAIModel(env)
-        : provider === 'claude'
-          ? env.CLAUDE_MODEL?.trim() || 'claude-sonnet-4-6'
-          : null,
+    model: provider === 'openai'
+      ? openAIModel(env)
+      : provider === 'claude'
+        ? envValue('CLAUDE_MODEL', env)?.trim() || 'claude-sonnet-4-6'
+        : null,
     available: provider === 'openai' ? openAIAvailable(env) : provider === 'claude' ? anthropicAvailable : true,
     promptId: provider === 'openai' ? openAIPromptId(env) : null,
     promptVersion: provider === 'openai' ? openAIPromptVersion(env) : null,

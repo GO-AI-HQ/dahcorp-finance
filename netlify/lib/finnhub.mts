@@ -4,6 +4,8 @@ import {
   ENERGY_INTELLIGENCE_SYMBOLS,
   sectorForText,
   SEMICONDUCTOR_INTELLIGENCE_SYMBOLS,
+  SHIPPING_INTELLIGENCE_SYMBOLS,
+  TECHNOLOGY_INTELLIGENCE_SYMBOLS,
   symbolsForText,
 } from '../../src/intelligence/taxonomy.js';
 
@@ -155,22 +157,36 @@ export async function fetchFinnhubIntelligence(): Promise<{ events: Intelligence
     ? (await Promise.all(market.data.slice(0, 30).map((item) => normalizeNews(item, 'market_news')))).filter((row): row is IntelligenceEvent => row !== null)
     : [];
 
-  // Anchor-company calls keep request volume low while still detecting the two
-  // sectors. ETF/tactical symbols are mapped downstream by the taxonomy.
-  const [amdNews, tsmNews, ccjNews, amdCongress, ccjCongress, amdLobbying, ccjLobbying] = await Promise.all([
-    companyNews('AMD'),
-    companyNews('TSM'),
-    companyNews('CCJ'),
+  // One anchor per active research lane keeps request volume disciplined while
+  // the broader taxonomy maps sector spillovers downstream.
+  const [
+    amdNews, ccjNews, inswNews, googlNews,
+    amdCongress, ccjCongress, inswCongress, googlCongress,
+    amdLobbying, ccjLobbying, inswLobbying, googlLobbying,
+  ] = await Promise.all([
+    companyNews('AMD'), companyNews('CCJ'), companyNews('INSW'), companyNews('GOOGL'),
     capitalEvents('/stock/congressional-trading', 'AMD', 'Congressional disclosure'),
     capitalEvents('/stock/congressional-trading', 'CCJ', 'Congressional disclosure'),
+    capitalEvents('/stock/congressional-trading', 'INSW', 'Congressional disclosure'),
+    capitalEvents('/stock/congressional-trading', 'GOOGL', 'Congressional disclosure'),
     capitalEvents('/stock/lobbying', 'AMD', 'Lobbying disclosure'),
     capitalEvents('/stock/lobbying', 'CCJ', 'Lobbying disclosure'),
+    capitalEvents('/stock/lobbying', 'INSW', 'Lobbying disclosure'),
+    capitalEvents('/stock/lobbying', 'GOOGL', 'Lobbying disclosure'),
   ]);
 
-  const events = [...marketRows, ...amdNews, ...tsmNews, ...ccjNews, ...amdCongress, ...ccjCongress, ...amdLobbying, ...ccjLobbying]
-    .filter((event) => event.sector !== 'cross_market' || event.symbols.some((symbol) =>
-      [...SEMICONDUCTOR_INTELLIGENCE_SYMBOLS, ...ENERGY_INTELLIGENCE_SYMBOLS].includes(symbol as never),
-    ));
+  const strategySymbols = [
+    ...SEMICONDUCTOR_INTELLIGENCE_SYMBOLS,
+    ...ENERGY_INTELLIGENCE_SYMBOLS,
+    ...SHIPPING_INTELLIGENCE_SYMBOLS,
+    ...TECHNOLOGY_INTELLIGENCE_SYMBOLS,
+  ];
+  const events = [
+    ...marketRows,
+    ...amdNews, ...ccjNews, ...inswNews, ...googlNews,
+    ...amdCongress, ...ccjCongress, ...inswCongress, ...googlCongress,
+    ...amdLobbying, ...ccjLobbying, ...inswLobbying, ...googlLobbying,
+  ].filter((event) => event.sector !== 'cross_market' || event.symbols.some((symbol) => strategySymbols.includes(symbol as never)));
 
   const partial = !market.ok;
   return {
@@ -181,7 +197,7 @@ export async function fetchFinnhubIntelligence(): Promise<{ events: Intelligence
       status: partial ? 'partial' : 'live',
       note: partial
         ? `Finnhub key is configured; at least one endpoint was unavailable on the current plan (HTTP ${market.status || 'n/a'}). Optional premium feeds degrade safely.`
-        : 'Finnhub market/company news and public-disclosure probes are active. Premium endpoint availability depends on the Finnhub plan.',
+        : 'Finnhub market/company news and public-disclosure probes are active across semiconductor, energy, shipping and technology research lanes. Premium endpoint availability depends on the Finnhub plan.',
     },
   };
 }

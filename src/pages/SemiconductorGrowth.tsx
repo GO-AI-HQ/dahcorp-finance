@@ -42,8 +42,12 @@ export function SemiconductorGrowth() {
   const headline = restrictiveIntel
     ? 'WAIT — policy evidence argues for caution'
     : best
-      ? `${best.symbol} — buy zone reached; evaluate a staged entry`
+      ? `${best.symbol} — buy zone reached; model the amount before buying`
       : 'WAIT — no core semiconductor entry currently qualifies';
+  const modelQuestion = best
+    ? `A ${best.symbol} semiconductor buy zone is active. Compare buying ${best.symbol}, holding Growth cash, and any permitted tactical alternative such as SOXL/TSMX. Recommend the specific dollar amount only if the move improves the strategy after current policy and market evidence.`
+    : 'Review the semiconductor Growth mandate. Should I hold cash, accumulate a core name, or prepare a tactical semiconductor trade? Do not manufacture a transaction if no setup qualifies.';
+  const modelTo = `/modeling-lab?question=${encodeURIComponent(modelQuestion)}`;
 
   return (
     <>
@@ -59,11 +63,11 @@ export function SemiconductorGrowth() {
           <div className="panel"><span className="soft">Growth Cash Queue</span><strong style={{ display: 'block', marginTop: 4 }}>{formatMoney(growthCash)}</strong><p className="meta">Cash may remain idle indefinitely.</p></div>
           <div className="panel"><span className="soft">Market Intelligence</span><strong style={{ display: 'block', marginTop: 4 }}>{pulse?.label ?? 'Building evidence'}</strong><p className="meta">Policy: {pulse?.policy ?? 'unknown'} · News: {pulse?.newsPressure ?? 'unknown'}</p></div>
           <div className="panel"><span className="soft">Best price setup</span><strong style={{ display: 'block', marginTop: 4 }}>{best?.symbol ?? 'None qualified'}</strong><p className="meta">{best ? `${formatPct(best.dip.declineFromReference ?? 0, 1)} below its reference.` : 'A decline alone is not enough.'}</p></div>
-          <div className="panel"><span className="soft">Recommended amount</span><strong style={{ display: 'block', marginTop: 4 }}>Pending Strategy Lab</strong><p className="meta">No arbitrary staged percentage is invented.</p></div>
+          <div className="panel"><span className="soft">Recommended amount</span><strong style={{ display: 'block', marginTop: 4 }}>Modeling Lab decides</strong><p className="meta">The amount comes from live cash, portfolio overlap, evidence and risk—not an arbitrary tranche percentage.</p></div>
         </div>
         <div className="row" style={{ gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
-          <Link className="btn btn--sm btn--ghost" to="/strategy-lab">Test in Strategy Lab</Link>
-          <Link className="btn btn--sm btn--ghost" to="/portfolio">Open Cash Queue</Link>
+          <Link className="btn btn--sm btn--gold" to={modelTo}>Build Proposed Model</Link>
+          <Link className="btn btn--sm btn--ghost" to="/portfolio">Open Growth Cash Queue</Link>
           <Link className="btn btn--sm btn--ghost" to="/intelligence">Why the market view?</Link>
         </div>
       </Card>
@@ -75,13 +79,15 @@ export function SemiconductorGrowth() {
             : row.trend.status !== 'TREND_CONFIRMED'
               ? 'WATCH'
               : row.dip.actionable
-                ? 'REVIEW ENTRY'
+                ? 'MODEL ENTRY'
                 : 'WAIT';
+          const rowModelTo = `/modeling-lab?symbol=${encodeURIComponent(row.symbol)}&side=buy&question=${encodeURIComponent(`Should I buy ${row.symbol} now from the Robinhood Growth Cash Queue? Compare the proposed purchase with holding cash and recommend a dollar amount only if the deterministic setup and intelligence support it.`)}`;
           return (
-            <Card key={row.symbol} label={`${row.symbol} · Core growth`} title={decision} action={<Badge tone={decision === 'REVIEW ENTRY' ? 'positive' : 'neutral'}>{row.dip.actionable ? 'Buy zone reached' : 'No buy zone'}</Badge>}>
+            <Card key={row.symbol} label={`${row.symbol} · Core growth`} title={decision} action={<Badge tone={decision === 'MODEL ENTRY' ? 'positive' : 'neutral'}>{row.dip.actionable ? 'Buy zone reached' : 'No buy zone'}</Badge>}>
               <p><strong>{plainTrend(row.trend.status)}</strong></p>
               <p className="meta">Price {formatMoney(row.price)} · {row.dip.declineFromReference == null ? 'reference unavailable' : `${formatPct(row.dip.declineFromReference, 1)} below reference`}.</p>
               <p className="meta">{row.dip.actionable && row.trend.status === 'TREND_CONFIRMED' ? 'The price has reached a planned entry zone without breaking the deterministic trend framework.' : 'One or more conditions needed for a staged entry are still missing.'}</p>
+              {decision === 'MODEL ENTRY' ? <p style={{ marginTop: 10 }}><Link className="btn btn--sm btn--ghost" to={rowModelTo}>Model {row.symbol} amount</Link></p> : null}
             </Card>
           );
         })}
@@ -94,6 +100,7 @@ export function SemiconductorGrowth() {
             <Card key={row.symbol} label={`${row.symbol} · High-risk tactical`} title={tacticalDecision} tone="risk">
               <p className="meta">Daily-reset leverage makes this a tactical instrument, not permanent core exposure. A deep decline does not automatically make it safer to buy.</p>
               <p className="meta">Market health: {plainTrend(row.trend.status)} · {row.dip.declineFromReference == null ? 'Price reference unavailable.' : `Price decline ${formatPct(row.dip.declineFromReference, 1)}.`}</p>
+              <p className="meta">Any BUY or SELL must be modeled against the tactical principal watermark, current leverage ceiling and the intended profit-recycling destination.</p>
             </Card>
           );
         })}
@@ -101,9 +108,7 @@ export function SemiconductorGrowth() {
 
       <details className="section">
         <summary className="btn btn--ghost">View advanced semiconductor evidence</summary>
-        <div style={{ marginTop: 16 }}>
-          <Semiconductor />
-        </div>
+        <div style={{ marginTop: 16 }}><Semiconductor /></div>
       </details>
     </>
   );

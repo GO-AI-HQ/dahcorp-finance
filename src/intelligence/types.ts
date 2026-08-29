@@ -1,4 +1,4 @@
-export type IntelligenceSector = 'semiconductors' | 'energy' | 'cross_market';
+export type IntelligenceSector = 'semiconductors' | 'energy' | 'shipping' | 'technology' | 'cross_market';
 
 export type IntelligenceSourceClass =
   | 'primary_source'
@@ -7,6 +7,7 @@ export type IntelligenceSourceClass =
   | 'capital_signal'
   | 'policy_proxy'
   | 'supply_chain'
+  | 'analyst_commentary'
   | 'openbb';
 
 export type IntelligenceLatency =
@@ -50,7 +51,39 @@ export type EnergyEventType =
   | 'URANIUM_SUPPLY_SHOCK'
   | 'POWER_DEMAND_CHANGE';
 
-export type IntelligenceEventType = SemiconductorEventType | EnergyEventType | 'CAPITAL_DISCLOSURE' | 'MARKET_NEWS' | 'OTHER';
+export type ShippingEventType =
+  | 'FREIGHT_RATE_RISE'
+  | 'FREIGHT_RATE_FALL'
+  | 'TANKER_TIGHTENING'
+  | 'DRY_BULK_TIGHTENING'
+  | 'CONTAINER_TIGHTENING'
+  | 'LNG_SHIPPING_CHANGE'
+  | 'VESSEL_SUPPLY_CHANGE'
+  | 'ORDERBOOK_CHANGE'
+  | 'CANAL_DISRUPTION'
+  | 'HORMUZ_DISRUPTION'
+  | 'RED_SEA_DISRUPTION'
+  | 'PORT_FEE_TARIFF'
+  | 'MARITIME_SANCTIONS'
+  | 'SHIPPING_ANALYST_VIEW';
+
+export type TechnologyEventType =
+  | 'AI_CAPEX_CHANGE'
+  | 'CLOUD_DEMAND_CHANGE'
+  | 'ADVERTISING_DEMAND_CHANGE'
+  | 'RETAIL_DEMAND_CHANGE'
+  | 'TECH_REGULATION'
+  | 'MEGA_CAP_EARNINGS'
+  | 'TECH_VALUATION_CHANGE';
+
+export type IntelligenceEventType =
+  | SemiconductorEventType
+  | EnergyEventType
+  | ShippingEventType
+  | TechnologyEventType
+  | 'CAPITAL_DISCLOSURE'
+  | 'MARKET_NEWS'
+  | 'OTHER';
 
 export interface IntelligenceEvent {
   fingerprint: string;
@@ -73,7 +106,7 @@ export interface IntelligenceEvent {
 }
 
 export interface IntelligenceProviderStatus {
-  provider: 'finnhub' | 'openbb' | 'primary_sources';
+  provider: 'finnhub' | 'openbb' | 'primary_sources' | 'ainvest' | 'shipping_commentary';
   connected: boolean;
   status: 'live' | 'partial' | 'not_configured' | 'unavailable';
   note: string;
@@ -89,6 +122,17 @@ export interface IntelligencePulse {
   capitalSignals: 'constructive' | 'neutral' | 'cautious' | 'mixed' | 'unknown';
   eventCount: number;
   highImpactCount: number;
+}
+
+export interface HistoricalRelevance {
+  eventType: IntelligenceEventType;
+  sector: IntelligenceSector;
+  sampleSize: number;
+  oneDay: { count: number; median: number | null; min: number | null; max: number | null };
+  fiveDay: { count: number; median: number | null; min: number | null; max: number | null };
+  twentyDay: { count: number; median: number | null; min: number | null; max: number | null };
+  currentRegime: string | null;
+  summary: string;
 }
 
 export interface IntelligencePayload {
