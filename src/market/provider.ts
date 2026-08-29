@@ -9,7 +9,14 @@ import type { DistributionEvent, PriceBar, Quote } from '../core/types.js';
  */
 export interface MarketDataProvider {
   readonly id: string;
+  /**
+   * True when any material part of this provider is synthetic. Hybrid providers
+   * deliberately keep this true until every strategy-driving data family they
+   * expose is production sourced.
+   */
   readonly isMock: boolean;
+  /** Safe provenance text shown to the investor. Never place credentials here. */
+  readonly sourceNotes?: string[];
   getQuotes(symbols: string[], asOf: string): Promise<Record<string, Quote>>;
   getPriceHistory(symbols: string[], asOf: string, days: number): Promise<Record<string, PriceBar[]>>;
   getDistributions(symbols: string[], asOf: string, days: number): Promise<DistributionEvent[]>;
