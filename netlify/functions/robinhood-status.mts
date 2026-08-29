@@ -55,16 +55,11 @@ export default withErrorHandling('robinhood-status', async (req: Request) => {
     adapter.getAccountData(),
     adapter.listAvailableTools(),
     Promise.all(allowlist.map(async (symbol) => {
-      try {
-        return [symbol, await adapter.getQuote(symbol)] as const;
-      } catch {
-        return [symbol, null] as const;
-      }
+      try { return [symbol, await adapter.getQuote(symbol)] as const; }
+      catch { return [symbol, null] as const; }
     })),
   ]);
-  const quotes = Object.fromEntries(
-    quoteEntries.filter((entry): entry is readonly [string, NonNullable<(typeof entry)[1]>] => entry[1] != null),
-  );
+  const quotes = Object.fromEntries(quoteEntries.filter((entry): entry is readonly [string, NonNullable<(typeof entry)[1]>] => entry[1] != null));
   const quote = quotes[ROBINHOOD_EXECUTION_SYMBOL] ?? null;
   const toolNames = tools.map((tool) => tool.name);
   const executionToolsReady = ['review_equity_order', 'place_equity_order'].every((name) => toolNames.includes(name));
@@ -93,7 +88,7 @@ export default withErrorHandling('robinhood-status', async (req: Request) => {
       ? ctx.config.agenticExecutionMode === 'shadow'
         ? 'Live Robinhood MCP connected. Shadow Mode is active: the strategy observes and records decisions but cannot create live previews.'
         : adapter.capabilities.includes('place_order')
-          ? `Live Robinhood MCP connected. Human-confirmed BUY execution is constrained to: ${allowlist.join(', ')}.`
+          ? `Live Robinhood MCP connected. Human-confirmed BUY/SELL execution supports dollar or share sizing and is constrained to the Agentic allowlist: ${allowlist.join(', ')}.`
           : 'Live Robinhood MCP connected. The strategy is configured beyond Shadow Mode, but the deployment execution flag remains off.'
       : 'Robinhood is connected for reads, but the required equity order tools are not currently exposed to this OAuth session.',
   });
