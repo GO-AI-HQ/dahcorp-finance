@@ -17,9 +17,9 @@ import type {
 import type { BrokerStatus } from '../brokers/registry.js';
 import type { OrderStatus } from '../brokers/types.js';
 import type { StrategyConfig, IncomeMilestone, StrategyLevelInfo } from '../core/config.js';
-import type { RiskDecision, RiskFinding } from '../risk/types.js';
+import type { RiskDecision, RiskFinding, ProposedOrder } from '../risk/types.js';
 import type { AllocationPlan } from '../strategy/allocation.js';
-import type { RecommendationBrief } from '../agent/types.js';
+import type { RecommendationBrief, AgentSource } from '../agent/types.js';
 
 const BASE = '/.netlify/functions';
 
@@ -90,7 +90,9 @@ export interface SessionResponse {
   environment: {
     databaseAttached: boolean;
     modelAvailable: boolean;
+    modelProvider: 'openai' | 'claude' | 'deterministic';
     model: string | null;
+    recurringShadowUsesModel: boolean;
     executionEnabled: boolean;
     phase: number;
   };
@@ -105,7 +107,7 @@ export interface AnalyzeResponse {
   standingQuestions: string[];
   capital: number;
   brief: RecommendationBrief;
-  source: 'claude' | 'deterministic';
+  source: AgentSource;
   model: string | null;
   fallbackReason: string | null;
   usage: { inputTokens: number; outputTokens: number } | null;
@@ -283,7 +285,7 @@ export const api = {
       notional?: number;
       quantity?: number;
       rationale?: string;
-      origin?: string;
+      origin?: ProposedOrder['origin'];
     }[],
     recommendationId?: number | null,
   ) =>

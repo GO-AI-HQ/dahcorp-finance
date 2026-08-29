@@ -56,13 +56,13 @@ function RiskVerdict({ decision }: { decision: RiskDecision }) {
           {decision.approved ? 'Approved by policy' : 'Rejected by policy'}
         </Badge>
       }
-      hint="Claude cannot bypass this engine. Every recommendation is validated against deployable cash, position and sleeve limits, leverage ceilings, holding verification and order size before it can even be previewed."
+      hint="No language model can bypass this engine. Every recommendation is validated against deployable cash, position and sleeve limits, leverage ceilings, holding verification and order size before it can even become a broker-specific preview."
     >
       <div className="grid grid--2" style={{ gap: 'var(--space-2)' }}>
         <KeyValue label="Requested">{formatMoney(decision.requestedTotal, 0)}</KeyValue>
         <KeyValue label="Allowed">{formatMoney(decision.allowedTotal, 0)}</KeyValue>
-        <KeyValue label="Execution phase">{decision.executionPhase}</KeyValue>
-        <KeyValue label="Execution enabled">{decision.executionEnabled ? 'Yes' : 'No — disabled in this build'}</KeyValue>
+        <KeyValue label="Analysis phase">{decision.executionPhase}</KeyValue>
+        <KeyValue label="Analytical execution">{decision.executionEnabled ? 'Yes' : 'No — advisory only'}</KeyValue>
       </div>
 
       <p className="card__label" style={{ marginTop: 'var(--space-4)' }}>
@@ -115,6 +115,12 @@ function BriefCard({ brief, source, model, fallbackReason }: {
   fallbackReason: string | null;
 }) {
   const confidence = CONFIDENCE[brief.confidence] ?? CONFIDENCE.low;
+  const sourceLabel = source === 'openai'
+    ? `OpenAI · ${model ?? 'model'}`
+    : source === 'claude'
+      ? `Claude · ${model ?? 'model'}`
+      : 'Deterministic policy';
+  const sourceTone: BadgeTone = source === 'openai' || source === 'claude' ? 'intel' : 'neutral';
   return (
     <Card
       label="Recommendation"
@@ -125,19 +131,17 @@ function BriefCard({ brief, source, model, fallbackReason }: {
           <Badge tone={confidence.tone} glyph={confidence.glyph}>
             {brief.confidence} confidence
           </Badge>
-          <Badge tone={source === 'claude' ? 'intel' : 'neutral'} glyph={source === 'claude' ? '◆' : '⚙'}>
-            {source === 'claude' ? `Claude · ${model ?? 'model'}` : 'Deterministic policy'}
+          <Badge tone={sourceTone} glyph={source === 'openai' || source === 'claude' ? '◆' : '⚙'}>
+            {sourceLabel}
           </Badge>
         </div>
       }
     >
       {fallbackReason ? (
         <div className="banner banner--intel" role="note">
-          <span className="banner__glyph" aria-hidden="true">
-            i
-          </span>
+          <span className="banner__glyph" aria-hidden="true">i</span>
           <div>
-            <span className="banner__title">Produced by the deterministic engine</span>
+            <span className="banner__title">Deterministic fallback used</span>
             <span>{fallbackReason}</span>
           </div>
         </div>
@@ -145,27 +149,16 @@ function BriefCard({ brief, source, model, fallbackReason }: {
 
       <p>{brief.thesis}</p>
 
-      <p className="card__label" style={{ marginTop: 'var(--space-4)' }}>
-        <span>Proposed allocation</span>
-      </p>
+      <p className="card__label" style={{ marginTop: 'var(--space-4)' }}><span>Proposed allocation</span></p>
       <LegTable legs={brief.legs} />
 
-      <p className="card__label" style={{ marginTop: 'var(--space-4)' }}>
-        <span>Effect on the milestone</span>
-      </p>
+      <p className="card__label" style={{ marginTop: 'var(--space-4)' }}><span>Effect on the milestone</span></p>
       <p>{brief.etaImpact}</p>
 
-      <p className="card__label" style={{ marginTop: 'var(--space-4)' }}>
-        <span>What would make this wrong</span>
-      </p>
+      <p className="card__label" style={{ marginTop: 'var(--space-4)' }}><span>What would make this wrong</span></p>
       {brief.risks.length ? (
         <ul className="bullets">
-          {brief.risks.map((risk) => (
-            <li key={risk}>
-              <span aria-hidden="true">▲ </span>
-              {risk}
-            </li>
-          ))}
+          {brief.risks.map((risk) => <li key={risk}><span aria-hidden="true">▲ </span>{risk}</li>)}
         </ul>
       ) : (
         <p className="meta">No risks were articulated, which is itself a reason to be sceptical of this brief.</p>
@@ -173,9 +166,7 @@ function BriefCard({ brief, source, model, fallbackReason }: {
 
       {brief.alternative ? (
         <>
-          <p className="card__label" style={{ marginTop: 'var(--space-4)' }}>
-            <span>Alternative allocation</span>
-          </p>
+          <p className="card__label" style={{ marginTop: 'var(--space-4)' }}><span>Alternative allocation</span></p>
           <p>{brief.alternative.summary}</p>
           <LegTable legs={brief.alternative.legs} />
           <p className="meta">Trade-off: {brief.alternative.tradeoff}</p>
@@ -184,27 +175,15 @@ function BriefCard({ brief, source, model, fallbackReason }: {
 
       {brief.notes.length ? (
         <>
-          <p className="card__label" style={{ marginTop: 'var(--space-4)' }}>
-            <span>Notes</span>
-          </p>
-          <ul className="bullets">
-            {brief.notes.map((note) => (
-              <li key={note}>{note}</li>
-            ))}
-          </ul>
+          <p className="card__label" style={{ marginTop: 'var(--space-4)' }}><span>Notes</span></p>
+          <ul className="bullets">{brief.notes.map((note) => <li key={note}>{note}</li>)}</ul>
         </>
       ) : null}
 
       {brief.dataCaveats.length ? (
         <>
-          <p className="card__label" style={{ marginTop: 'var(--space-4)' }}>
-            <span>Data caveats</span>
-          </p>
-          <ul className="bullets">
-            {brief.dataCaveats.map((caveat) => (
-              <li key={caveat}>{caveat}</li>
-            ))}
-          </ul>
+          <p className="card__label" style={{ marginTop: 'var(--space-4)' }}><span>Data caveats</span></p>
+          <ul className="bullets">{brief.dataCaveats.map((caveat) => <li key={caveat}>{caveat}</li>)}</ul>
         </>
       ) : null}
     </Card>
@@ -260,7 +239,7 @@ export function ClaudeConsole() {
           side: 'buy' as const,
           notional: leg.amount,
           rationale: leg.reason,
-          origin: 'claude',
+          origin: 'agent',
         })),
         result.recommendationId,
       );
@@ -271,37 +250,28 @@ export function ClaudeConsole() {
   }
 
   const model = session.data?.environment.model ?? null;
+  const modelProvider = session.data?.environment.modelProvider ?? null;
 
   return (
     <>
       <PageHead
-        eyebrow="Claude"
+        eyebrow="Treasury Agent"
         title="Portfolio strategist"
-        lede="Claude interprets the deterministic signals and proposes where capital should go. It cannot place an order, change a limit, or move a dollar — every proposal is validated by the risk engine before it can be previewed."
+        lede="The configured model interprets live portfolio and market signals, but it cannot change policy or move capital. Every recommendation is independently validated by the deterministic risk engine. Recurring Shadow observations do not use an LLM."
         action={
           <Badge tone={model ? 'intel' : 'warning'} glyph={model ? '◆' : '▲'}>
-            {model ? model : 'No model configured'}
+            {model ? `${modelProvider ?? 'model'} · ${model}` : 'Deterministic fallback'}
           </Badge>
         }
       />
 
       <Card label="Ask" title="Put a question to the strategist">
         <div className="field">
-          <label className="field__label" htmlFor="question">
-            Question
-          </label>
-          <textarea
-            id="question"
-            rows={3}
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            disabled={busy}
-          />
+          <label className="field__label" htmlFor="question">Question</label>
+          <textarea id="question" rows={3} value={question} onChange={(e) => setQuestion(e.target.value)} disabled={busy} />
         </div>
         <div className="field">
-          <label className="field__label" htmlFor="capital">
-            Capital to allocate (optional)
-          </label>
+          <label className="field__label" htmlFor="capital">Capital to allocate (optional)</label>
           <input
             id="capital"
             type="number"
@@ -313,8 +283,7 @@ export function ClaudeConsole() {
             disabled={busy}
           />
           <p className="field__hint">
-            Bounded server-side by deployable brokerage cash. The protected external household reserve is held outside the
-            brokerages and is never offered for allocation.
+            Bounded server-side by deployable brokerage cash. The protected external household reserve is held outside the brokerages and is never offered for allocation.
           </p>
         </div>
         <div className="row">
@@ -325,138 +294,76 @@ export function ClaudeConsole() {
 
         {result?.standingQuestions?.length ? (
           <>
-            <p className="card__label" style={{ marginTop: 'var(--space-5)' }}>
-              <span>Standing questions</span>
-            </p>
+            <p className="card__label" style={{ marginTop: 'var(--space-5)' }}><span>Standing questions</span></p>
             <div className="chip-group">
               {result.standingQuestions.map((q) => (
-                <button key={q} type="button" className="chip" onClick={() => void ask(q)} disabled={busy}>
-                  {q}
-                </button>
+                <button key={q} type="button" className="chip" onClick={() => void ask(q)} disabled={busy}>{q}</button>
               ))}
             </div>
           </>
         ) : null}
       </Card>
 
-      {error ? (
-        <div className="section">
-          <ErrorState error={error} onRetry={() => void ask()} />
-        </div>
-      ) : null}
-
-      {busy && !result ? (
-        <div className="section">
-          <LoadingBlock rows={4} label="Consulting the strategist" />
-        </div>
-      ) : null}
+      {error ? <div className="section"><ErrorState error={error} onRetry={() => void ask()} /></div> : null}
+      {busy && !result ? <div className="section"><LoadingBlock rows={4} label="Consulting the strategist" /></div> : null}
 
       {result ? (
         <>
           <div className="section">
-            <BriefCard
-              brief={result.brief}
-              source={result.source}
-              model={result.model}
-              fallbackReason={result.fallbackReason}
-            />
+            <BriefCard brief={result.brief} source={result.source} model={result.model} fallbackReason={result.fallbackReason} />
           </div>
 
-          <div className="section">
-            <RiskVerdict decision={result.riskDecision} />
-          </div>
+          <div className="section"><RiskVerdict decision={result.riskDecision} /></div>
 
           <div className="grid grid--2 section">
             <Card label="Human decision" title="Approve, reject or edit">
               <p className="meta">
-                Recording a decision writes it to the audit log with the portfolio snapshot the recommendation was based
-                on. Approval records intent — it does not execute anything in this build.
+                Recording a decision writes it to the audit log with the portfolio snapshot the recommendation was based on. Approval records intent — it does not bypass broker-specific Shadow/Confirm controls.
               </p>
               <div className="row" style={{ marginTop: 'var(--space-4)' }}>
-                <button type="button" className="btn btn--gold btn--sm" onClick={() => void record('approved')} disabled={!result.recommendationId || decision != null}>
-                  Approve
-                </button>
-                <button type="button" className="btn btn--sm" onClick={() => void record('edited')} disabled={!result.recommendationId || decision != null}>
-                  Edit
-                </button>
-                <button type="button" className="btn btn--danger btn--sm" onClick={() => void record('rejected')} disabled={!result.recommendationId || decision != null}>
-                  Reject
-                </button>
+                <button type="button" className="btn btn--gold btn--sm" onClick={() => void record('approved')} disabled={!result.recommendationId || decision != null}>Approve</button>
+                <button type="button" className="btn btn--sm" onClick={() => void record('edited')} disabled={!result.recommendationId || decision != null}>Edit</button>
+                <button type="button" className="btn btn--danger btn--sm" onClick={() => void record('rejected')} disabled={!result.recommendationId || decision != null}>Reject</button>
               </div>
-              {decision ? (
-                <p className="meta" style={{ marginTop: 'var(--space-3)' }}>
-                  <span aria-hidden="true">✓ </span>
-                  Recorded as <strong>{decision}</strong>. Nothing was sent to a broker.
-                </p>
-              ) : null}
-              {!result.recommendationId ? (
-                <p className="meta" style={{ marginTop: 'var(--space-3)' }}>
-                  No database is attached, so this recommendation was not persisted and cannot be decided on.
-                </p>
-              ) : null}
+              {decision ? <p className="meta" style={{ marginTop: 'var(--space-3)' }}><span aria-hidden="true">✓ </span>Recorded as <strong>{decision}</strong>.</p> : null}
+              {!result.recommendationId ? <p className="meta" style={{ marginTop: 'var(--space-3)' }}>No database is attached, so this recommendation was not persisted and cannot be decided on.</p> : null}
             </Card>
 
-            <Card label="Trade preview" title="Validate, never execute" tone="risk">
+            <Card label="Analytical preview" title="Validate before any broker lane" tone="risk">
               <p className="meta">{result.phaseNote}</p>
               <div className="row" style={{ marginTop: 'var(--space-4)' }}>
-                <button type="button" className="btn btn--sm" onClick={() => void previewOrders()} disabled={!result.brief.legs.length}>
-                  Build trade preview
-                </button>
-                <Badge tone="negative" glyph="✕">
-                  Execution disabled
-                </Badge>
+                <button type="button" className="btn btn--sm" onClick={() => void previewOrders()} disabled={!result.brief.legs.length}>Build analytical preview</button>
+                <Badge tone="ice" glyph="◌">Shadow policy</Badge>
               </div>
-              {previewNote ? (
-                <p className="meta" style={{ marginTop: 'var(--space-3)' }}>
-                  {previewNote}
-                </p>
-              ) : null}
+              {previewNote ? <p className="meta" style={{ marginTop: 'var(--space-3)' }}>{previewNote}</p> : null}
               <p className="meta" style={{ marginTop: 'var(--space-3)' }}>
-                The execute endpoint contains no broker client. It is not a flag that could be flipped by accident —
-                there is no code path to a live order in this build.
+                This generic preview never submits a broker order. Schwab and Robinhood have separate guarded execution functions, and Robinhood remains Shadow Mode by strategy policy.
               </p>
             </Card>
           </div>
 
           <div className="section">
-            <Card label="Baseline" title="What the deterministic policy would do on its own" hint="Shown alongside Claude's brief so the model's contribution is always separable from the rules.">
+            <Card label="Baseline" title="What the deterministic policy would do on its own" hint="Shown beside the model brief so the model's contribution is always separable from the rules.">
               <LegTable
-                legs={result.baseline.plan.legs.map((leg) => ({
-                  symbol: leg.symbol,
-                  amount: leg.amount,
-                  accountId: leg.accountId,
-                  reason: leg.reason,
-                }))}
+                legs={result.baseline.plan.legs.map((leg) => ({ symbol: leg.symbol, amount: leg.amount, accountId: leg.accountId, reason: leg.reason }))}
               />
               <ul className="bullets" style={{ marginTop: 'var(--space-3)' }}>
-                {result.baseline.plan.reasoning.map((line) => (
-                  <li key={line}>{line}</li>
-                ))}
+                {result.baseline.plan.reasoning.map((line) => <li key={line}>{line}</li>)}
               </ul>
               {result.baseline.plan.constraints.length ? (
                 <ul className="bullets">
-                  {result.baseline.plan.constraints.map((line) => (
-                    <li key={line}>
-                      <span aria-hidden="true">▲ </span>
-                      {line}
-                    </li>
-                  ))}
+                  {result.baseline.plan.constraints.map((line) => <li key={line}><span aria-hidden="true">▲ </span>{line}</li>)}
                 </ul>
               ) : null}
               {result.baseline.plan.reserved > 0 ? (
-                <p className="meta">
-                  {formatMoney(result.baseline.plan.reserved, 0)} deliberately left uninvested.{' '}
-                  {result.baseline.plan.reservedReason}
-                </p>
+                <p className="meta">{formatMoney(result.baseline.plan.reserved, 0)} deliberately left uninvested. {result.baseline.plan.reservedReason}</p>
               ) : null}
             </Card>
           </div>
         </>
       ) : !busy && !error ? (
         <div className="section">
-          <EmptyState title="No recommendation yet">
-            Ask a question above. Every answer is stored with the exact portfolio snapshot it was based on.
-          </EmptyState>
+          <EmptyState title="No recommendation yet">Ask a question above. Every answer is stored with the exact portfolio snapshot it was based on.</EmptyState>
         </div>
       ) : null}
     </>

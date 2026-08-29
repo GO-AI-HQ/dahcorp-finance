@@ -16,6 +16,35 @@ export const DISTRIBUTION_BASIS_LABELS: Record<DistributionBasis, string> = {
 /** Reference anchor for dip-level measurement. */
 export type DipReference = 'recent_high_60d' | 'high_52w' | 'sma50' | 'sma200' | 'fair_value';
 
+/**
+ * Agentic execution lifecycle. Shadow observes only. Confirm permits broker
+ * previews that still require explicit investor confirmation. Bounded is a
+ * future policy state and does not itself grant an adapter permission to trade.
+ */
+export type AgenticExecutionMode = 'shadow' | 'confirm' | 'bounded';
+
+export type ProfitWaterfallDestination =
+  | 'restore_tactical_principal'
+  | 'core_growth'
+  | 'income_engine'
+  | 'cash_reserve';
+
+export interface CashQueueConfig {
+  /** When true, new brokerage cash may remain idle indefinitely. */
+  enabled: boolean;
+  /** Cash is deployed only after a deterministic strategy signal qualifies. */
+  requireQualifiedSignal: boolean;
+  /** Additional cap on a single qualified deployment, as a fraction of queue cash. */
+  maxDeployPctPerSignal: number;
+}
+
+export interface ShadowReadinessConfig {
+  /** Evidence target, not a model-training claim. */
+  minimumObservations: number;
+  /** Minimum distinct market dates represented in the shadow ledger. */
+  minimumTradingDays: number;
+}
+
 export interface IncomeMilestone {
   id: string;
   label: string;
@@ -54,8 +83,8 @@ export interface TrendConfig {
 }
 
 /**
- * The complete deterministic policy. Everything Claude is allowed to influence
- * lives here as data — Claude may *propose* changes, but only a human writing
+ * The complete deterministic policy. Everything an LLM is allowed to influence
+ * lives here as data — a model may *propose* changes, but only a human writing
  * settings can change them, and the risk engine only ever reads this object.
  */
 export interface StrategyConfig {
@@ -115,6 +144,24 @@ export interface StrategyConfig {
   dipLevels: number[];
   dipReference: DipReference;
   trend: TrendConfig;
+
+  /** Current Agentic lifecycle state. Shadow is the safe production default. */
+  agenticExecutionMode: AgenticExecutionMode;
+  /** Securities the Robinhood Agentic growth engine is allowed to reason about. */
+  agenticGrowthAllowlist: string[];
+  /** Cash arriving at the Agentic account is a queue, never an automatic buy. */
+  cashQueue: CashQueueConfig;
+  /** Evidence thresholds used by the readiness UI. */
+  shadowReadiness: ShadowReadinessConfig;
+  /**
+   * Tactical principal reference dollars by symbol. Zero means the engine uses
+   * verified tactical cost basis as the current watermark until the investor
+   * explicitly sets a fixed reference.
+   */
+  tacticalPrincipalWatermarks: Record<string, number>;
+  /** Priority order for profits above the tactical principal watermark. */
+  profitWaterfallOrder: ProfitWaterfallDestination[];
+
   /** Execution phase. Phase 1 = observer. Live trading is never enabled here. */
   executionPhase: 1 | 2 | 3 | 4 | 5;
   /** Global kill switch — when true no order may be previewed or placed. */
@@ -173,18 +220,33 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
     benchmarkSymbol: 'SMH',
     requireVolumeConfirmation: false,
   },
+  agenticExecutionMode: 'shadow',
+  agenticGrowthAllowlist: ['NVDY', 'SOXL', 'TSMX', 'SEMI', 'SMH', 'AMD'],
+  cashQueue: {
+    enabled: true,
+    requireQualifiedSignal: true,
+    maxDeployPctPerSignal: 1,
+  },
+  shadowReadiness: {
+    minimumObservations: 30,
+    minimumTradingDays: 20,
+  },
+  tacticalPrincipalWatermarks: { SOXL: 0, TSMX: 0 },
+  profitWaterfallOrder: ['restore_tactical_principal', 'core_growth', 'income_engine', 'cash_reserve'],
   executionPhase: 1,
   killSwitch: false,
 };
 
-/** Merge a partial stored config over the defaults, one level deep on objects. */
 /**
- * A stored or submitted patch. Everything is optional, and the whole-portfolio
- * risk rules may arrive one key at a time — a UI toggle changes one rule, not
- * the set.
+ * A stored or submitted patch. Everything is optional, and nested risk / Agentic
+ * objects may arrive one key at a time — a UI toggle changes one rule, not the set.
  */
-export type StrategyConfigPatch = Partial<Omit<StrategyConfig, 'wholePortfolioRules'>> & {
+export type StrategyConfigPatch = Partial<
+  Omit<StrategyConfig, 'wholePortfolioRules' | 'cashQueue' | 'shadowReadiness'>
+> & {
   wholePortfolioRules?: Partial<WholePortfolioRules>;
+  cashQueue?: Partial<CashQueueConfig>;
+  shadowReadiness?: Partial<ShadowReadinessConfig>;
 };
 
 export function mergeStrategyConfig(
@@ -213,6 +275,15 @@ export function mergeStrategyConfig(
     harvestRules: patch.harvestRules?.length ? patch.harvestRules : base.harvestRules,
     dipLevels: patch.dipLevels?.length ? patch.dipLevels : base.dipLevels,
     trend: { ...base.trend, ...(patch.trend ?? {}) },
+    agenticExecutionMode: patch.agenticExecutionMode ?? base.agenticExecutionMode,
+    agenticGrowthAllowlist: patch.agenticGrowthAllowlist?.length ? patch.agenticGrowthAllowlist.map((s) => s.toUpperCase()) : base.agenticGrowthAllowlist,
+    cashQueue: { ...base.cashQueue, ...(patch.cashQueue ?? {}) },
+    shadowReadiness: { ...base.shadowReadiness, ...(patch.shadowReadiness ?? {}) },
+    tacticalPrincipalWatermarks: {
+      ...base.tacticalPrincipalWatermarks,
+      ...(patch.tacticalPrincipalWatermarks ?? {}),
+    },
+    profitWaterfallOrder: patch.profitWaterfallOrder?.length ? patch.profitWaterfallOrder : base.profitWaterfallOrder,
     // Execution phase and the kill switch are deliberately never widened by a
     // partial patch that omits them.
     executionPhase: patch.executionPhase ?? base.executionPhase,

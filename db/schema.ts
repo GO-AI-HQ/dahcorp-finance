@@ -123,7 +123,7 @@ export const corporateActions = pgTable(
 );
 
 /**
- * Every Claude recommendation, with the portfolio and market snapshot it was
+ * Every model recommendation, with the portfolio and market snapshot it was
  * made against and the deterministic verdict that followed. This is the record
  * that makes it possible to judge, later, whether the agent added value.
  */
@@ -134,8 +134,8 @@ export const recommendations = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     question: text().notNull(),
     availableCapital: doublePrecision('available_capital').notNull().default(0),
-    /** 'claude' or 'deterministic' when the model was unavailable. */
-    source: text().notNull().default('claude'),
+    /** 'openai' | 'claude' | 'deterministic'. */
+    source: text().notNull().default('deterministic'),
     model: text(),
     headline: text().notNull().default(''),
     confidence: text().notNull().default('unknown'),
@@ -155,7 +155,47 @@ export const recommendations = pgTable(
   (table) => [index('recommendations_created_at_idx').on(table.createdAt)],
 );
 
-/** Proposed orders. Nothing in this build ever moves one to 'placed'. */
+/**
+ * Shadow Mode's evidence ledger. These are hypothetical observations only.
+ * Nothing in this table is executable and nothing here is interpreted as a
+ * model having "learned" or retrained itself. Outcome fields are populated
+ * later so calibration can be measured against what actually happened.
+ */
+export const shadowDecisions = pgTable(
+  'shadow_decisions',
+  {
+    id: serial().primaryKey(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    marketDate: text('market_date').notNull(),
+    /** Stable de-duplication key, normally date + strategy + symbol. */
+    fingerprint: text().notNull(),
+    strategy: text().notNull(),
+    symbol: text().notNull(),
+    /** buy | hold | harvest | reduce | exit | reserve */
+    action: text().notNull(),
+    accountExternalId: text('account_external_id'),
+    price: doublePrecision().notNull().default(0),
+    /** Transparent 0-100 evidence score, not a probability forecast. */
+    score: doublePrecision().notNull().default(0),
+    suggestedNotional: doublePrecision('suggested_notional').notNull().default(0),
+    rationale: text().notNull().default(''),
+    modelSource: text('model_source').notNull().default('deterministic'),
+    model: text(),
+    signals: jsonb().notNull(),
+    riskVerdict: jsonb('risk_verdict'),
+    status: text().notNull().default('shadow'),
+    /** Forward outcome checkpoints (1d/5d/20d) are appended here later. */
+    outcome: jsonb(),
+  },
+  (table) => [
+    uniqueIndex('shadow_decisions_fingerprint_idx').on(table.fingerprint),
+    index('shadow_decisions_created_at_idx').on(table.createdAt),
+    index('shadow_decisions_market_date_idx').on(table.marketDate),
+    index('shadow_decisions_symbol_idx').on(table.symbol),
+  ],
+);
+
+/** Proposed orders. Only explicit guarded execution endpoints may place them. */
 export const orderPreviews = pgTable(
   'order_previews',
   {
@@ -177,7 +217,7 @@ export const orderPreviews = pgTable(
     allowedNotional: doublePrecision('allowed_notional').notNull().default(0),
     findings: jsonb().notNull(),
     impact: jsonb().notNull(),
-    /** 'preview' | 'approved' | 'rejected' | 'expired'. Never 'placed'. */
+    /** preview | approved | rejected | expired | placed | submission_unknown. */
     status: text().notNull().default('preview'),
   },
   (table) => [index('order_previews_created_at_idx').on(table.createdAt)],

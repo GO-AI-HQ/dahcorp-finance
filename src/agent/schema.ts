@@ -1,10 +1,10 @@
 /**
  * Structured-output contract for the recommendation.
  *
- * Claude is required to answer through this tool so the response is parsed, not
- * scraped. Anything that fails validation is discarded in favour of the
- * deterministic brief — a malformed model response never becomes a silent
- * half-recommendation.
+ * Every model provider is required to answer through this tool so the response
+ * is parsed, not scraped. Anything that fails validation is discarded in favour
+ * of the deterministic brief — a malformed model response never becomes a
+ * silent half-recommendation.
  */
 import type { RecommendationBrief, RecommendedLeg } from './types.js';
 

@@ -21,9 +21,10 @@ import {
 } from './helpers.js';
 
 /**
- * Semiconductor engine: two permanent cores (TSM, SMH) plus a tactical
- * leveraged sleeve (TSMX ~2x, SOXL ~3x) that exists to be harvested into the
- * cores. Daily leverage is never treated as long-term leverage.
+ * Semiconductor capital recycling: long-horizon core candidates (SEMI, SMH,
+ * AMD) plus a tactical leveraged sleeve (TSMX ~2x, SOXL ~3x). Tactical rules
+ * skim eligible profit above a principal watermark rather than a percentage of
+ * the whole position. Daily leverage is never treated as long-term leverage.
  */
 const SOXL_RULE: HarvestRule = DEFAULT_STRATEGY_CONFIG.harvestRules.find((r) => r.symbol === 'SOXL')!;
 const TSMX_RULE: HarvestRule = DEFAULT_STRATEGY_CONFIG.harvestRules.find((r) => r.symbol === 'TSMX')!;
@@ -62,18 +63,21 @@ describe('computeHarvestSignal', () => {
     return analyzePortfolio(snapshot, DEFAULT_STRATEGY_CONFIG).positions[0];
   }
 
-  it('arms at the configured gain and harvests the configured portion', () => {
+  it('arms at the configured gain and skims the configured portion of eligible profit', () => {
     // 10 shares at a $24 tactical basis, now $30 — exactly +25%.
+    // Principal watermark = $240, market value = $300, eligible profit = $60.
     const position = positionAt('SOXL', 10, 24, 30);
     const signal = computeHarvestSignal({ rule: SOXL_RULE, position, quote: makeQuote('SOXL', 30), trend, bars });
 
+    expect(signal.principalWatermark).toBeCloseTo(240, 10);
+    expect(signal.eligibleProfit).toBeCloseTo(60, 10);
     expect(signal.gainPct).toBeCloseTo(0.25, 10);
     expect(signal.triggerGainPct).toBe(0.25);
     expect(signal.triggerPrice).toBeCloseTo(30, 10);
     expect(signal.progressToTrigger).toBeCloseTo(1, 10);
     expect(signal.armed).toBe(true);
-    expect(signal.harvestShares).toBeCloseTo(2.5, 10);
-    expect(signal.harvestProceeds).toBeCloseTo(75, 10);
+    expect(signal.harvestProceeds).toBeCloseTo(15, 10); // 25% of $60 profit.
+    expect(signal.harvestShares).toBeCloseTo(0.5, 10);
     expect(signal.destinationSymbol).toBe('SMH');
     expect(signal.ruleOutcome).toContain('ARMED');
     expect(signal.ruleOutcome).toContain('→ SMH');
@@ -91,21 +95,40 @@ describe('computeHarvestSignal', () => {
     expect(signal.ruleOutcome).toContain('NOT ARMED');
   });
 
-  it('uses the TSMX rule’s own +20% trigger and TSM destination', () => {
-    const position = positionAt('TSMX', 5, 20, 24); // +20%
+  it('uses the TSMX rule’s own +20% trigger and destination', () => {
+    const position = positionAt('TSMX', 5, 20, 24); // +20%, $20 eligible profit.
     const signal = computeHarvestSignal({ rule: TSMX_RULE, position, quote: makeQuote('TSMX', 24), trend, bars });
     expect(signal.triggerGainPct).toBe(0.2);
     expect(signal.armed).toBe(true);
-    expect(signal.destinationSymbol).toBe('TSM');
-    expect(signal.harvestShares).toBeCloseTo(1.25, 10);
+    expect(signal.destinationSymbol).toBe(TSMX_RULE.destinationSymbol);
+    expect(signal.harvestProceeds).toBeCloseTo(5, 10);
+    expect(signal.harvestShares).toBeCloseTo(5 / 24, 10);
   });
 
   it('measures the gain against the tactical basis, not the accounting basis', () => {
-    // Accounting basis $30/share, tactical basis $200 total for 10 shares.
+    // Accounting basis $30/share, tactical principal basis $200 total for 10 shares.
     const position = positionAt('SOXL', 10, 30, 30, 200);
     const signal = computeHarvestSignal({ rule: SOXL_RULE, position, quote: makeQuote('SOXL', 30), trend, bars });
     expect(signal.tacticalCostBasis).toBe(200);
+    expect(signal.principalWatermark).toBe(200);
     expect(signal.gainPct).toBeCloseTo(0.5, 10);
+    expect(signal.eligibleProfit).toBeCloseTo(100, 10);
+    expect(signal.armed).toBe(true);
+  });
+
+  it('can use an explicit principal watermark instead of tactical basis', () => {
+    const position = positionAt('SOXL', 10, 24, 30);
+    const signal = computeHarvestSignal({
+      rule: { ...SOXL_RULE, triggerGainPct: 0.2 },
+      position,
+      quote: makeQuote('SOXL', 30),
+      trend,
+      bars,
+      principalWatermark: 250,
+    });
+    expect(signal.principalWatermark).toBe(250);
+    expect(signal.eligibleProfit).toBe(50);
+    expect(signal.gainPct).toBeCloseTo(0.2, 10);
     expect(signal.armed).toBe(true);
   });
 
@@ -140,7 +163,7 @@ describe('computeHarvestSignal', () => {
     expect(signal.ruleOutcome).toContain('cannot evaluate');
   });
 
-  it('respects a reconfigured trigger and portion', () => {
+  it('respects a reconfigured trigger and profit-skimming portion', () => {
     const position = positionAt('SOXL', 10, 24, 30);
     const signal = computeHarvestSignal({
       rule: { ...SOXL_RULE, triggerGainPct: 0.5, harvestPortionPct: 1 },
@@ -160,7 +183,8 @@ describe('computeHarvestSignal', () => {
       bars,
     });
     expect(bigger.armed).toBe(true);
-    expect(bigger.harvestShares).toBeCloseTo(10, 10);
+    expect(bigger.harvestProceeds).toBeCloseTo(60, 10);
+    expect(bigger.harvestShares).toBeCloseTo(2, 10);
   });
 });
 
@@ -195,7 +219,7 @@ describe('computeRiskReduction', () => {
     expect(signal.recommendedAction).toBe('exit');
     expect(signal.triggered).toBe(true);
     expect(signal.reasons.join(' ')).toContain('TREND LOST');
-    expect(signal.detail).toContain('Phase 1 takes no action automatically.');
+    expect(signal.detail).toContain('Shadow Mode takes no action automatically.');
   });
 
   it('reduces on a drawdown beyond the break threshold and stops adding beyond the warning', () => {
@@ -236,15 +260,17 @@ describe('buildSemiconductorEngine', () => {
   const snapshot = makeSnapshot({
     accounts: [makeAccount('rh-1', { broker: 'robinhood', cash: 1_000 })],
     holdings: [
-      makeHolding('rh-1', 'TSM', 2, 150),
+      makeHolding('rh-1', 'SEMI', 2, 30),
       makeHolding('rh-1', 'SMH', 1, 240),
+      makeHolding('rh-1', 'AMD', 1, 150),
       makeHolding('rh-1', 'SOXL', 10, 24),
       makeHolding('rh-1', 'TSMX', 5, 25),
     ],
-    quotes: quotesFor({ TSM: 180, SMH: 260, SOXL: 30, TSMX: 26 }),
+    quotes: quotesFor({ SEMI: 38, SMH: 260, AMD: 180, SOXL: 30, TSMX: 26 }),
     priceHistory: {
-      TSM: linearBars(120, 180, 260),
+      SEMI: linearBars(25, 38, 260),
       SMH: linearBars(200, 260, 260),
+      AMD: linearBars(120, 180, 260),
       SOXL: linearBars(18, 30, 260),
       TSMX: linearBars(20, 26, 260),
     },
@@ -257,18 +283,18 @@ describe('buildSemiconductorEngine', () => {
     config,
   });
 
-  it('reports TSM and SMH as permanent cores with their own trend and dip signals', () => {
-    expect(engine.cores.map((c) => c.symbol)).toEqual(['TSM', 'SMH']);
+  it('reports SEMI, SMH and AMD as long-horizon core candidates with their own trend and dip signals', () => {
+    expect(engine.cores.map((c) => c.symbol)).toEqual(['SEMI', 'SMH', 'AMD']);
     for (const core of engine.cores) {
-      expect(core.role).toBe('Permanent Core');
+      expect(core.role).toBe('Long-horizon Core');
       expect(core.held).toBe(true);
       expect(core.trend.symbol).toBe(core.symbol);
       expect(core.dip.symbol).toBe(core.symbol);
     }
-    const tsm = engine.cores[0];
-    expect(tsm.shares).toBe(2);
-    expect(tsm.marketValue).toBeCloseTo(360, 8);
-    expect(tsm.unrealizedPL).toBeCloseTo(60, 8);
+    const semi = engine.cores[0];
+    expect(semi.shares).toBe(2);
+    expect(semi.marketValue).toBeCloseTo(76, 8);
+    expect(semi.unrealizedPL).toBeCloseTo(16, 8);
   });
 
   it('reports a core that is not held without pretending it is owned', () => {
@@ -288,18 +314,19 @@ describe('buildSemiconductorEngine', () => {
     const tsmx = engine.tactical.find((t) => t.symbol === 'TSMX')!;
     expect(soxl.leverage).toBe(3);
     expect(tsmx.leverage).toBe(2);
-    expect(soxl.destinationSymbol).toBe('SMH');
-    expect(tsmx.destinationSymbol).toBe('TSM');
+    expect(soxl.destinationSymbol).toBe(SOXL_RULE.destinationSymbol);
+    expect(tsmx.destinationSymbol).toBe(TSMX_RULE.destinationSymbol);
   });
 
-  it('arms the SOXL leg at +25% and reports the flywheel proceeds', () => {
+  it('arms the SOXL leg at +25% and reports profit-only flywheel proceeds', () => {
     const soxl = engine.tactical.find((t) => t.symbol === 'SOXL')!;
     expect(soxl.harvest.armed).toBe(true);
-    expect(soxl.harvest.harvestProceeds).toBeCloseTo(75, 8);
+    expect(soxl.harvest.eligibleProfit).toBeCloseTo(60, 8);
+    expect(soxl.harvest.harvestProceeds).toBeCloseTo(15, 8);
 
     const leg = engine.flywheel.find((f) => f.from === 'SOXL')!;
-    expect(leg).toMatchObject({ from: 'SOXL', to: 'SMH', armed: true });
-    expect(leg.proceeds).toBeCloseTo(75, 8);
+    expect(leg).toMatchObject({ from: 'SOXL', to: SOXL_RULE.destinationSymbol, armed: true });
+    expect(leg.proceeds).toBeCloseTo(15, 8);
     expect(engine.flywheel).toHaveLength(2);
     // TSMX is +4%, well short of its +20% trigger.
     expect(engine.flywheel.find((f) => f.from === 'TSMX')!.armed).toBe(false);
@@ -307,7 +334,7 @@ describe('buildSemiconductorEngine', () => {
 
   it('quantifies leveraged exposure against the configured ceiling', () => {
     const { exposure } = engine;
-    const total = 2 * 180 + 260 + 10 * 30 + 5 * 26 + 1_000;
+    const total = 2 * 38 + 260 + 180 + 10 * 30 + 5 * 26 + 1_000;
     expect(exposure.leveragedValue).toBeCloseTo(300 + 130, 8);
     expect(exposure.leveragedPct).toBeCloseTo(430 / total, 8);
     expect(exposure.maxPct).toBe(0.1);

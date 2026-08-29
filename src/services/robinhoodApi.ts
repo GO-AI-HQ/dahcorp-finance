@@ -1,6 +1,7 @@
 import { ApiError } from './api.js';
 import type { OrderStatus } from '../brokers/types.js';
 import type { RiskFinding } from '../risk/types.js';
+import type { AgenticExecutionMode } from '../core/config.js';
 
 const BASE = '/.netlify/functions';
 
@@ -36,9 +37,11 @@ export interface RobinhoodQuoteResponse {
 export interface RobinhoodStatusResponse {
   connected: boolean;
   executionEnabled: boolean;
+  executionMode: AgenticExecutionMode;
   connectUrl: string;
   manualCompletionRequired: boolean;
-  symbol: 'NVDY';
+  symbol: string;
+  allowlist: string[];
   accounts: {
     id: string;
     name: string;
@@ -47,6 +50,7 @@ export interface RobinhoodStatusResponse {
     tradeEligible: boolean;
   }[];
   quote: RobinhoodQuoteResponse | null;
+  quotes: Record<string, RobinhoodQuoteResponse>;
   toolNames: string[];
   note: string;
 }
@@ -54,7 +58,7 @@ export interface RobinhoodStatusResponse {
 export interface RobinhoodTradePreviewResponse {
   approved: boolean;
   previewId: number | null;
-  symbol: 'NVDY';
+  symbol: string;
   account: { id: string; name: string; cash: number };
   quote: RobinhoodQuoteResponse;
   quantity: number;
@@ -75,7 +79,7 @@ export interface RobinhoodTradePreviewResponse {
 export interface RobinhoodExecutionResponse {
   executed: true;
   previewId: number;
-  symbol: 'NVDY';
+  symbol: string;
   quantity: number;
   estimatedNotional: number;
   quote: RobinhoodQuoteResponse;
@@ -89,9 +93,9 @@ export const robinhoodApi = {
     method: 'POST',
     body: JSON.stringify({ callbackUrl }),
   }),
-  preview: (accountId: string, quantity: number) => request<RobinhoodTradePreviewResponse>('/robinhood-trade-preview', {
+  preview: (accountId: string, quantity: number, symbol = 'NVDY') => request<RobinhoodTradePreviewResponse>('/robinhood-trade-preview', {
     method: 'POST',
-    body: JSON.stringify({ accountId, quantity }),
+    body: JSON.stringify({ accountId, quantity, symbol }),
   }),
   execute: (previewId: number, confirmation: string) => request<RobinhoodExecutionResponse>('/robinhood-order-execute', {
     method: 'POST',

@@ -1,7 +1,7 @@
 import { json, methodNotAllowed, withErrorHandling } from '../lib/http.mts';
 import { readSessionEnv, verifySession } from '../lib/session.mts';
 import { databaseAvailable } from '../lib/store.mts';
-import { modelAvailable, resolveModel } from '../lib/claude.mts';
+import { agentRuntimeStatus } from '../lib/agentModel.mts';
 
 /**
  * GET /.netlify/functions/auth-session
@@ -15,6 +15,7 @@ export default withErrorHandling('auth-session', async (req: Request) => {
 
   const env = readSessionEnv();
   const session = await verifySession(req, env);
+  const agent = agentRuntimeStatus();
 
   return json({
     authenticated: session.authenticated,
@@ -25,8 +26,10 @@ export default withErrorHandling('auth-session', async (req: Request) => {
     sessionTtlMinutes: env.ttlMinutes,
     environment: {
       databaseAttached: databaseAvailable(),
-      modelAvailable: modelAvailable(),
-      model: modelAvailable() ? resolveModel() : null,
+      modelAvailable: agent.available,
+      modelProvider: agent.provider,
+      model: agent.model,
+      recurringShadowUsesModel: agent.recurringShadowUsesModel,
       executionEnabled: false,
       phase: 1,
     },

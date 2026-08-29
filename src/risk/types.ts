@@ -18,12 +18,12 @@ export interface ProposedOrder {
   limitPrice?: number;
   /** Why this order exists, in the strategy's own terms. */
   rationale: string;
-  /** Which engine produced it. */
-  origin: 'claude' | 'harvest_rule' | 'dip_rule' | 'rebalance' | 'manual';
+  /** Which engine produced it. `claude` remains for historical audit rows. */
+  origin: 'agent' | 'claude' | 'harvest_rule' | 'dip_rule' | 'rebalance' | 'manual';
   /**
    * Where the money is coming from. `external_reserve` is always rejected —
-   * the household reserve is protected capital and neither Claude nor the
-   * deterministic policy engine may ever recommend drawing it down.
+   * the household reserve is protected capital and neither an LLM nor the
+   * deterministic policy engine may recommend drawing it down.
    */
   fundingSource?: 'broker_cash' | 'new_contribution' | 'sale_proceeds' | 'external_reserve';
   sleeve: Sleeve;
@@ -71,6 +71,6 @@ export interface RiskDecision {
   requestedTotal: number;
   /** Execution phase in force at decision time. */
   executionPhase: number;
-  /** Always false in Phase 1. */
+  /** Always false in Phase 1 analytical validation. Broker-specific guarded execution is separate. */
   executionEnabled: boolean;
 }

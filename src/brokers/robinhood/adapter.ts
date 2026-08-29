@@ -1,4 +1,5 @@
 import type { Account, AccountType, Holding, Sleeve } from '../../core/types.js';
+import { getInstrumentOrFallback } from '../../core/universe.js';
 import type { ProposedOrder } from '../../risk/types.js';
 import {
   BrokerNotConfiguredError,
@@ -11,6 +12,9 @@ import {
 } from '../types.js';
 
 export const ROBINHOOD_DEFAULT_MCP_ENDPOINT = 'https://agent.robinhood.com/mcp/trading';
+/** Maximum code-level universe. Strategy settings may narrow this, never widen it. */
+export const ROBINHOOD_MAX_EXECUTION_SYMBOLS = ['NVDY', 'SOXL', 'TSMX', 'SEMI', 'SMH', 'AMD'] as const;
+/** Backwards-compatible primary symbol used by the first execution card. */
 export const ROBINHOOD_EXECUTION_SYMBOL = 'NVDY';
 
 export interface RobinhoodMcpTool {
@@ -109,7 +113,11 @@ function accountType(raw: RawAccount): AccountType {
 }
 
 function sleeveFor(symbol: string): Sleeve {
-  return symbol.toUpperCase() === ROBINHOOD_EXECUTION_SYMBOL ? 'income_engine' : 'unclassified';
+  return getInstrumentOrFallback(symbol).sleeve;
+}
+
+function rawAccountNumber(raw: RawAccount): string | null {
+  return raw.account_number?.trim() || raw.rhs_account_number?.trim() || null;
 }
 
 function last4(value: string): string {
@@ -165,8 +173,8 @@ export class RobinhoodAdapter implements BrokerAdapter {
           : this.config.mode === 'manual'
             ? 'Robinhood positions are maintained manually.'
             : this.config.executionEnabled
-              ? 'Official Robinhood Trading MCP connected; guarded NVDY execution is enabled.'
-              : 'Official Robinhood Trading MCP connected read-only; NVDY execution is not armed.',
+              ? `Official Robinhood Trading MCP connected; guarded BUY execution is available only for ${ROBINHOOD_MAX_EXECUTION_SYMBOLS.join(', ')}.`
+              : 'Official Robinhood Trading MCP connected read-only; Agentic execution is not armed.',
     };
   }
 
@@ -210,7 +218,7 @@ export class RobinhoodAdapter implements BrokerAdapter {
 
   private async accountNumberFor(safeId: string, requireAgentic = false): Promise<{ raw: RawAccount; accountNumber: string }> {
     for (const raw of await this.rawAccounts()) {
-      const accountNumber = raw.account_number?.trim();
+      const accountNumber = rawAccountNumber(raw);
       if (!accountNumber) continue;
       if ((await safeAccountId(accountNumber)) === safeId) {
         if (requireAgentic && raw.agentic_allowed !== true) throw new Error('Robinhood permits trading only in the Agentic account.');
@@ -262,10 +270,12 @@ export class RobinhoodAdapter implements BrokerAdapter {
     const accounts: Account[] = [];
     const accountMap = new Map<string, string>();
     for (const raw of rawAccounts) {
-      const accountNumber = raw.account_number?.trim();
+      const accountNumber = rawAccountNumber(raw);
       if (!accountNumber) continue;
       const id = await safeAccountId(accountNumber);
       accountMap.set(accountNumber, id);
+      if (raw.account_number) accountMap.set(raw.account_number, id);
+      if (raw.rhs_account_number) accountMap.set(raw.rhs_account_number, id);
       const cash = await this.portfolioCash(raw, accountNumber);
       accounts.push({
         id,
@@ -287,7 +297,8 @@ export class RobinhoodAdapter implements BrokerAdapter {
     const positionPayloads: { accountNumber: string | null; payload: unknown }[] = [];
     if ('account_number' in properties) {
       for (const raw of rawAccounts) {
-        if (raw.account_number) positionPayloads.push({ accountNumber: raw.account_number, payload: await this.callForAccount('get_equity_positions', raw.account_number) });
+        const accountNumber = rawAccountNumber(raw);
+        if (accountNumber) positionPayloads.push({ accountNumber, payload: await this.callForAccount('get_equity_positions', accountNumber) });
       }
     } else {
       positionPayloads.push({ accountNumber: null, payload: await this.gateway!.callTool('get_equity_positions', {}) });
@@ -307,12 +318,15 @@ export class RobinhoodAdapter implements BrokerAdapter {
         if (seen.has(key)) continue;
         seen.add(key);
         const average = toNumber(raw.average_buy_price ?? raw.average_cost);
+        const instrument = getInstrumentOrFallback(symbol);
+        const costBasisTotal = average * shares;
         holdings.push({
           id: key,
           accountId,
           symbol,
           shares,
-          costBasisTotal: average * shares,
+          costBasisTotal,
+          tacticalCostBasisTotal: instrument.leverage > 1 ? costBasisTotal : undefined,
           sleeve: sleeveFor(symbol),
           legacy: false,
           verification: 'CONFIRMED',
@@ -325,15 +339,16 @@ export class RobinhoodAdapter implements BrokerAdapter {
 
   async getQuote(symbol: string): Promise<RobinhoodQuoteSnapshot> {
     if (this.config.mode !== 'live' || !this.gateway) throw new BrokerNotConfiguredError('Robinhood', ['OAuth authorization']);
+    const normalized = symbol.toUpperCase().trim();
     await this.tool('get_equity_quotes');
-    const payload = await this.gateway.callTool('get_equity_quotes', { symbols: [symbol.toUpperCase()] });
+    const payload = await this.gateway.callTool('get_equity_quotes', { symbols: [normalized] });
     const rows = arrayAt(payload, 'results', 'quotes');
     const row = (rows[0] && typeof rows[0] === 'object' ? rows[0] : {}) as Record<string, unknown>;
     const quote = (row.quote && typeof row.quote === 'object' ? row.quote : row) as Record<string, unknown>;
     const price = toNumber(quote.last_trade_price ?? quote.last_price ?? quote.mark_price ?? quote.price);
-    if (price <= 0) throw new Error(`Robinhood returned no usable quote for ${symbol}.`);
+    if (price <= 0) throw new Error(`Robinhood returned no usable quote for ${normalized}.`);
     return {
-      symbol: String(quote.symbol ?? symbol).toUpperCase(),
+      symbol: String(quote.symbol ?? normalized).toUpperCase(),
       price,
       bid: toNumber(quote.bid_price) || null,
       ask: toNumber(quote.ask_price) || null,
@@ -343,8 +358,9 @@ export class RobinhoodAdapter implements BrokerAdapter {
   }
 
   private async orderArgs(toolName: 'review_equity_order' | 'place_equity_order', order: ProposedOrder): Promise<Record<string, unknown>> {
-    if (order.symbol.toUpperCase() !== ROBINHOOD_EXECUTION_SYMBOL || order.side !== 'buy' || order.orderType !== 'market') {
-      throw new Error(`Robinhood execution is hard-allowlisted to BUY ${ROBINHOOD_EXECUTION_SYMBOL} market orders.`);
+    const symbol = order.symbol.toUpperCase().trim();
+    if (!ROBINHOOD_MAX_EXECUTION_SYMBOLS.includes(symbol as (typeof ROBINHOOD_MAX_EXECUTION_SYMBOLS)[number]) || order.side !== 'buy' || order.orderType !== 'market') {
+      throw new Error(`Robinhood execution transport is hard-allowlisted to BUY market orders in: ${ROBINHOOD_MAX_EXECUTION_SYMBOLS.join(', ')}.`);
     }
     if (typeof order.quantity !== 'number' || !Number.isInteger(order.quantity) || order.quantity <= 0) {
       throw new Error('Robinhood live execution currently requires a positive whole-share quantity.');
@@ -354,7 +370,7 @@ export class RobinhoodAdapter implements BrokerAdapter {
     const properties = tool.inputSchema?.properties ?? {};
     const args: Record<string, unknown> = {};
     if ('account_number' in properties) args.account_number = accountNumber;
-    if ('symbol' in properties) args.symbol = ROBINHOOD_EXECUTION_SYMBOL;
+    if ('symbol' in properties) args.symbol = symbol;
     if ('side' in properties) args.side = 'buy';
     if ('order_type' in properties) args.order_type = 'market';
     if ('type' in properties) args.type = 'market';
@@ -404,17 +420,18 @@ export class RobinhoodAdapter implements BrokerAdapter {
       status,
       filledShares: toNumber(rawOrder.cumulative_quantity ?? rawOrder.filled_quantity),
       filledAveragePrice: toNumber(rawOrder.average_price ?? rawOrder.filled_average_price) || null,
-      message: `Robinhood accepted the ${ROBINHOOD_EXECUTION_SYMBOL} order request with status ${status}.`,
+      message: `Robinhood accepted the ${order.symbol.toUpperCase()} order request with status ${status}.`,
     };
   }
 
   async getOrderStatus(brokerOrderId: string): Promise<OrderStatus> {
     if (this.config.mode !== 'live' || !this.gateway) throw new BrokerNotConfiguredError('Robinhood', ['OAuth authorization']);
-    const agentic = (await this.rawAccounts()).find((item) => item.agentic_allowed === true && item.account_number);
+    const agentic = (await this.rawAccounts()).find((item) => item.agentic_allowed === true && rawAccountNumber(item));
     const tool = await this.tool('get_equity_orders');
     const properties = tool.inputSchema?.properties ?? {};
     const args: Record<string, unknown> = {};
-    if ('account_number' in properties && agentic?.account_number) args.account_number = agentic.account_number;
+    const agenticAccountNumber = agentic ? rawAccountNumber(agentic) : null;
+    if ('account_number' in properties && agenticAccountNumber) args.account_number = agenticAccountNumber;
     const payload = await this.gateway.callTool('get_equity_orders', args);
     const found = arrayAt(payload, 'orders', 'results').find((item) => item && typeof item === 'object' && ((item as Record<string, unknown>).id === brokerOrderId || (item as Record<string, unknown>).order_id === brokerOrderId));
     if (!found || typeof found !== 'object') return { brokerOrderId, status: 'pending', filledShares: 0, filledAveragePrice: null, message: 'Order not found in the latest Robinhood history response.' };
