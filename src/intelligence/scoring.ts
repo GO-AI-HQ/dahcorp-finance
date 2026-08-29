@@ -23,7 +23,7 @@ function signedDirection(event: IntelligenceEvent): number {
   return 0;
 }
 
-function classifyDirection(value: number): 'positive' | 'neutral' | 'negative' | 'mixed' | 'unknown' {
+function classifyDirection(value: number): IntelligencePulse['market'] {
   if (!Number.isFinite(value)) return 'unknown';
   if (value >= 0.2) return 'positive';
   if (value <= -0.2) return 'negative';
