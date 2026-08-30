@@ -6,6 +6,9 @@ import { useResource } from '../hooks/useResource.js';
 import { PageHead } from '../components/PageHead.js';
 import { Card } from '../components/Card.js';
 import { Badge } from '../components/Badge.js';
+import { MarketPulseTicker } from '../components/MarketPulseTicker.js';
+import { GovernmentTradingTicker } from '../components/GovernmentTradingTicker.js';
+import { AssetDecisionTranslator } from '../components/AssetDecisionTranslator.js';
 import { ErrorState, LoadingCards } from '../components/States.js';
 import { formatMoney, formatPct } from '../core/format.js';
 import type { HistoricalRelevance, IntelligenceEvent, IntelligencePulse, IntelligenceSector } from '../intelligence/types.js';
@@ -181,9 +184,11 @@ export function Intelligence() {
   const [historicalBusy, setHistoricalBusy] = useState(false);
   const intelligence = useResource(() => refreshToken ? intelligenceApi.refresh() : intelligenceApi.current(), [refreshToken]);
   const portfolio = useResource(() => api.portfolio(), []);
+  const signals = useResource(() => api.signals(), []);
 
   if (intelligence.error) return <ErrorState error={intelligence.error} onRetry={intelligence.reload} />;
-  if (!intelligence.data || !portfolio.data) return <LoadingCards count={6} />;
+  if (signals.error) return <ErrorState error={signals.error} onRetry={signals.reload} />;
+  if (!intelligence.data || !portfolio.data || !signals.data) return <LoadingCards count={6} />;
   const data = intelligence.data;
   const p = portfolio.data;
   const growthCash = p.accounts.filter((row) => row.account.broker === 'robinhood' && row.account.allocationEligible).reduce((sum, row) => sum + row.cash, 0);
@@ -207,9 +212,17 @@ export function Intelligence() {
       <PageHead
         eyebrow="Market Intelligence"
         title="What changed — and does it change the plan?"
-        lede="DAHCorp filters policy, market news and public positioning through your actual strategies. If an event does not materially affect a goal, holding, Cash Queue or planned action, it does not deserve the primary screen."
+        lede="DAHCorp filters market benchmarks, policy, news and public positioning through your actual strategies. If evidence does not materially affect a goal, holding, Cash Queue or planned action, it does not deserve the primary screen."
         action={<button type="button" className="btn btn--sm btn--ghost" disabled={intelligence.refreshing} onClick={() => setRefreshToken((value) => value + 1)}>{intelligence.refreshing ? 'Refreshing…' : 'Refresh intelligence'}</button>}
       />
+
+      <div className="section"><MarketPulseTicker items={data.marketPulse} /></div>
+
+      <div className="section">
+        <AssetDecisionTranslator signals={signals.data.signals} pulses={data.pulses} marketPulse={data.marketPulse} />
+      </div>
+
+      <div className="section"><GovernmentTradingTicker signals={data.governmentTrading} /></div>
 
       <div className="grid grid--4 section">
         {data.pulses.map((pulse) => <PulseCard key={pulse.sector} pulse={pulse} />)}
@@ -226,7 +239,7 @@ export function Intelligence() {
                     <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                       <Badge tone={event.severity === 'high' ? 'negative' : 'warning'}>{event.severity.toUpperCase()} IMPACT</Badge>
                       <Badge tone="neutral">{latencyLabel(event)}</Badge>
-                      <Badge tone="intel">{event.sourceClass === 'primary_source' ? 'PRIMARY SOURCE' : event.sourceClass === 'analyst_commentary' ? 'ANALYST EVIDENCE' : 'MARKET SOURCE'}</Badge>
+                      <Badge tone="intel">{event.sourceClass === 'primary_source' ? 'PRIMARY SOURCE' : event.sourceClass === 'analyst_commentary' ? 'ANALYST EVIDENCE' : event.sourceClass === 'market_benchmark' ? 'PRIMARY MARKET' : event.sourceClass === 'openbb' ? 'OPENBB CONFIRMATION' : 'MARKET SOURCE'}</Badge>
                     </div>
                     <h3 style={{ marginTop: 10 }}>{event.headline}</h3>
                     <p className="meta">{event.source} · {event.sector === 'cross_market' ? 'Cross-market' : SECTOR_NAME[event.sector]}</p>
@@ -245,7 +258,7 @@ export function Intelligence() {
                     <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
                       <button type="button" className="btn btn--sm btn--ghost" onClick={() => setWhyOpen(whyOpen === event.fingerprint ? null : event.fingerprint)}>Why?</button>
                       <button type="button" className="btn btn--sm btn--ghost" onClick={() => openHistory(event)}>Historical Relevance</button>
-                      <Link className="btn btn--sm btn--gold" to={`/strategy-lab?event=${encodeURIComponent(event.fingerprint)}&sector=${encodeURIComponent(event.sector)}&eventType=${encodeURIComponent(event.eventType)}`}>Model Impact</Link>
+                      <Link className="btn btn--sm btn--gold" to={`/modeling-lab?event=${encodeURIComponent(event.fingerprint)}&sector=${encodeURIComponent(event.sector)}&eventType=${encodeURIComponent(event.eventType)}`}>Model Impact</Link>
                       {event.sourceUrl ? <a className="btn btn--sm btn--ghost" href={event.sourceUrl} target="_blank" rel="noreferrer">Open source</a> : null}
                     </div>
                     {whyOpen === event.fingerprint ? (

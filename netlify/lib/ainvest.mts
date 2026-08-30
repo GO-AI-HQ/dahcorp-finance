@@ -2,7 +2,17 @@ import type { IntelligenceEvent, IntelligenceProviderStatus } from '../../src/in
 import { sectorForText } from '../../src/intelligence/taxonomy.js';
 
 const AINVEST_BASE = 'https://openapi.ainvest.com/open';
-const CONGRESS_WATCH = ['AMD', 'NVDA', 'CCJ', 'INSW', 'SBLK', 'GOOGL', 'AMZN'] as const;
+/**
+ * Keep the congressional verification universe deliberately finite. AInvest is
+ * ticker-specific, so this list covers the active DAHCorp sectors without
+ * turning each refresh into an uncontrolled API fan-out.
+ */
+const CONGRESS_WATCH = [
+  'AMD', 'NVDA', 'TSM', 'SMH',
+  'CCJ', 'XLE',
+  'INSW', 'SBLK',
+  'GOOGL', 'AMZN', 'WMT', 'MSFT',
+] as const;
 
 interface AInvestCongressTrade {
   name?: string;
@@ -135,8 +145,8 @@ export async function fetchAInvestCongressIntelligence(): Promise<{ events: Inte
       connected: true,
       status: failed ? 'partial' : 'live',
       note: failed
-        ? `AInvest is configured; ${failed} of ${CONGRESS_WATCH.length} ticker probes were unavailable. Available disclosures were still normalized.`
-        : `AInvest congressional disclosures are enriching ${CONGRESS_WATCH.length} strategy-relevant tickers with explicit filing latency.`,
+        ? `AInvest is configured; ${failed} of ${CONGRESS_WATCH.length} sector probes were unavailable. Available disclosures were still normalized with filing latency.`
+        : `AInvest congressional disclosures are verifying ${CONGRESS_WATCH.length} strategy-relevant symbols across Semiconductors, Energy, Shipping and Technology.`,
     },
   };
 }
