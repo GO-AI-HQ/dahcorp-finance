@@ -48,8 +48,8 @@ function isoDate(epochMs: number): string {
  * Schwab quote/history provider.
  *
  * `allowMockFallback` exists only for local/demo compatibility. Production
- * DAHCorp sets it false so a provider failure becomes missing/UNKNOWN evidence,
- * never a synthetic price, history series or distribution.
+ * DAHCorp defaults it false so a provider failure becomes missing/UNKNOWN
+ * evidence, never a synthetic price, history series or distribution.
  */
 export class SchwabHybridMarketDataProvider implements MarketDataProvider {
   readonly id: string;
@@ -64,7 +64,7 @@ export class SchwabHybridMarketDataProvider implements MarketDataProvider {
     env: NodeJS.ProcessEnv = process.env,
     liveHistorySymbols: string[] = [],
     private readonly fetchImpl: typeof fetch = fetch,
-    private readonly allowMockFallback = true,
+    private readonly allowMockFallback = false,
   ) {
     this.marketBaseUrl = (env.SCHWAB_MARKET_DATA_BASE_URL?.trim() || 'https://api.schwabapi.com/marketdata/v1').replace(/\/$/, '');
     this.liveHistorySymbols = new Set(liveHistorySymbols.map((symbol) => symbol.toUpperCase()));
