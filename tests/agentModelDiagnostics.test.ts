@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { safeOpenAIErrorFromPayload } from '../netlify/lib/agentModel.mts';
+import { safeOpenAIErrorFromPayload } from '../src/agent/openaiDiagnostics.js';
 
 describe('safeOpenAIErrorFromPayload', () => {
   it('returns only OpenAI error type and code', () => {
