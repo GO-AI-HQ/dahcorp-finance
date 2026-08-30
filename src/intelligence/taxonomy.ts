@@ -71,7 +71,7 @@ const SHIPPING_TERMS: Array<[RegExp, IntelligenceEventType, IntelligenceDirectio
   [/red sea|houthi|bab el[- ]mandeb/i, 'RED_SEA_DISRUPTION', 'mixed', 'high'],
   [/port fee|shipping tariff|shipbuilding fee|u.s.-built ship/i, 'PORT_FEE_TARIFF', 'mixed', 'medium'],
   [/maritime sanction|shipping sanction|shadow fleet/i, 'MARITIME_SANCTIONS', 'mixed', 'high'],
-  [/shipping stock|maritime investor|shipping investor|value investor'?s edge/i, 'SHIPPING_ANALYST_VIEW', 'mixed', 'low'],
+  [/shipping stock|maritime investor|shipping investor|value investor'?s edge|christopher vonheim|j\.? mintzmyer|mintzmyer|sal mercogliano/i, 'SHIPPING_ANALYST_VIEW', 'mixed', 'low'],
 ];
 
 const TECHNOLOGY_TERMS: Array<[RegExp, IntelligenceEventType, IntelligenceDirection, IntelligenceSeverity]> = [
@@ -104,7 +104,7 @@ export function sectorForText(text: string, symbols: string[] = []): Intelligenc
   const hasTechSymbol = TECHNOLOGY_INTELLIGENCE_SYMBOLS.some((symbol) => upperSymbols.has(symbol));
   const semiText = /semiconductor|chip|foundry|lithograph|wafer|gpu|ai accelerator|taiwan semiconductor|chips act/i.test(text);
   const energyText = /energy|oil|gas|lng|grid|power|nuclear|uranium|opec|ferc|eia|reactor/i.test(text);
-  const shippingText = /shipping|maritime|tanker|dry bulk|container ship|freight rate|baltic dry|vessel|shipyard|suez|hormuz|red sea/i.test(text);
+  const shippingText = /shipping|maritime|tanker|dry bulk|container ship|freight rate|baltic dry|vessel|shipyard|suez|hormuz|red sea|christopher vonheim|j\.? mintzmyer|mintzmyer|sal mercogliano/i.test(text);
   const technologyText = /alphabet|google|amazon|microsoft|meta|walmart|cloud|e-commerce|artificial intelligence|ai capex|mega-cap tech/i.test(text);
   const matches = [
     hasSemiSymbol || semiText ? 'semiconductors' : null,
