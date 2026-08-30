@@ -8,6 +8,7 @@ export type IntelligenceSourceClass =
   | 'policy_proxy'
   | 'supply_chain'
   | 'analyst_commentary'
+  | 'market_benchmark'
   | 'openbb';
 
 export type IntelligenceLatency =
@@ -82,6 +83,7 @@ export type IntelligenceEventType =
   | ShippingEventType
   | TechnologyEventType
   | 'CAPITAL_DISCLOSURE'
+  | 'MARKET_BENCHMARK_TREND'
   | 'MARKET_NEWS'
   | 'OTHER';
 
@@ -106,7 +108,7 @@ export interface IntelligenceEvent {
 }
 
 export interface IntelligenceProviderStatus {
-  provider: 'finnhub' | 'openbb' | 'primary_sources' | 'ainvest' | 'shipping_commentary';
+  provider: 'finnhub' | 'openbb' | 'tradingeconomics' | 'primary_sources' | 'ainvest' | 'shipping_commentary';
   connected: boolean;
   status: 'live' | 'partial' | 'not_configured' | 'unavailable';
   note: string;
@@ -124,6 +126,59 @@ export interface IntelligencePulse {
   highImpactCount: number;
 }
 
+export type MarketPulseState = 'Improving' | 'Constructive' | 'Neutral' | 'Weakening' | 'Defensive' | 'Unavailable';
+
+export interface MarketBenchmarkLeg {
+  name: string;
+  symbol: string;
+  provider: 'tradingeconomics' | 'openbb';
+  last: number | null;
+  return5d: number | null;
+  return30d: number | null;
+  asOf: string;
+}
+
+export interface MarketPulseTickerItem {
+  sector: Exclude<IntelligenceSector, 'cross_market'>;
+  state: MarketPulseState;
+  benchmarks: MarketBenchmarkLeg[];
+  confirmation: MarketBenchmarkLeg | null;
+  dataRole: 'primary' | 'proxy_fallback' | 'unavailable';
+  summary: string;
+}
+
+export interface GovernmentTradingSignal {
+  fingerprint: string;
+  sector: Exclude<IntelligenceSector, 'cross_market'>;
+  symbol: string;
+  trader: string;
+  party: string | null;
+  state: string | null;
+  tradeType: 'buy' | 'sell' | 'other';
+  tradeDate: string | null;
+  filingDate: string | null;
+  reportingGapDays: number | null;
+  size: string | null;
+  relatedEventFingerprint: string | null;
+  relatedHeadline: string | null;
+  relatedSource: string | null;
+  relation: 'before' | 'near' | 'after' | 'none';
+  daysFromEvent: number | null;
+  correlation: string;
+  strategicUse: string;
+}
+
+export type AssetDecisionAction = 'BUY' | 'ADD' | 'HOLD' | 'WAIT' | 'REDUCE' | 'SELL';
+
+export interface AssetDecision {
+  symbol: string;
+  sector: Exclude<IntelligenceSector, 'cross_market'>;
+  action: AssetDecisionAction;
+  rationale: string;
+  modelQuestion: string;
+  priority: number;
+}
+
 export interface HistoricalRelevance {
   eventType: IntelligenceEventType;
   sector: IntelligenceSector;
@@ -139,6 +194,8 @@ export interface IntelligencePayload {
   asOf: string;
   providers: IntelligenceProviderStatus[];
   pulses: IntelligencePulse[];
+  marketPulse: MarketPulseTickerItem[];
+  governmentTrading: GovernmentTradingSignal[];
   events: IntelligenceEvent[];
   capitalSignals: IntelligenceEvent[];
   policyEvents: IntelligenceEvent[];
