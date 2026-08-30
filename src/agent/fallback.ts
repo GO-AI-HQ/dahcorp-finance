@@ -13,6 +13,40 @@ import type { SemiconductorEngine } from '../core/semiconductor.js';
 import { activeMilestone } from '../core/config.js';
 import type { AgentResult, RecommendationBrief, RecommendedLeg } from './types.js';
 
+/**
+ * The deterministic allocator can answer broad allocation-policy questions,
+ * but it cannot safely infer the semantics of a bespoke transaction request.
+ * Requiring at least one ticker-like token keeps standing questions such as
+ * "where should my next dollar go?" eligible for deterministic fallback while
+ * blocking custom BUY/SELL/replace scenarios from being silently replaced by a
+ * generic allocation plan when the semantic model is unavailable.
+ */
+export function requiresSemanticModel(question: string): boolean {
+  const hasTicker = /\b[A-Z][A-Z0-9.]{1,5}\b/.test(question);
+  const hasTransactionVerb = /\b(buy|purchase|sell|replace|swap|switch|rotate|exit|trim|liquidate|reduce|add|increase|decrease|move)\b/i.test(question);
+  const hasComparison = /\b(instead of|versus|vs\.?|replace\s+.+\s+with|move\s+.+\s+(?:to|into)|only hold)\b/i.test(question);
+  return hasTicker && (hasTransactionVerb || hasComparison);
+}
+
+export function buildSemanticModelUnavailableBrief(question: string, capital: number): RecommendationBrief {
+  return {
+    headline: 'Semantic model unavailable — hold cash; no bespoke transaction modeled.',
+    confidence: 'low',
+    thesis: `The request "${question}" describes a specific transaction or comparison that the deterministic allocator is not permitted to reinterpret. Preserve ${capital.toFixed(2)} of available capital until the semantic model can evaluate the requested scenario directly.`,
+    legs: [],
+    risks: [
+      'Substituting a generic allocation plan for a specific BUY/SELL/replace question could create a transaction the investor did not ask to model.',
+    ],
+    alternative: null,
+    etaImpact: 'No modeled change to the goal until the requested scenario can be evaluated directly.',
+    notes: [
+      'The deterministic policy engine remains available for broad standing allocation questions.',
+      'No broker preview or staged order is created from this fallback.',
+    ],
+    dataCaveats: ['The semantic model is unavailable or rejected the request; the bespoke scenario was intentionally not inferred.'],
+  };
+}
+
 export function buildDeterministicBrief(args: {
   ctx: AnalysisContext;
   plan: AllocationPlan;
