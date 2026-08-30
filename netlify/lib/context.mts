@@ -23,6 +23,7 @@ import type { StrategyConfig } from '../../src/core/config.js';
 import { loadSchwabRefreshToken, saveSchwabRefreshToken } from './schwabTokens.mts';
 import { createRobinhoodGateway } from './robinhoodMcp.mts';
 import { SchwabHybridMarketDataProvider } from './schwabMarketProvider.mts';
+import { OpenBBGatewayMarketDataProvider, SchwabOpenBBMarketDataProvider } from './openbbGatewayProvider.mts';
 import type { SchwabAdapter } from '../../src/brokers/schwab/adapter.js';
 
 export function todayISO(now = new Date()): string {
@@ -176,7 +177,7 @@ export function selectMarketProvider(
   const schwab = adapters.find(
     (adapter): adapter is SchwabAdapter => adapter.id === 'schwab' && adapter.isConfigured() && adapter.capabilities.includes('read_quotes'),
   );
-  if (!schwab) return mockMarketDataProvider;
+  const openbb = new OpenBBGatewayMarketDataProvider(env);
 
   const historySymbols = [
     ...new Set([
@@ -189,6 +190,13 @@ export function selectMarketProvider(
       ...TECHNOLOGY_INTELLIGENCE_SYMBOLS,
     ].map((symbol) => symbol.toUpperCase())),
   ];
+
+  if (openbb.isConfigured()) {
+    return schwab
+      ? new SchwabOpenBBMarketDataProvider(schwab, openbb, env, historySymbols)
+      : openbb;
+  }
+  if (!schwab) return mockMarketDataProvider;
   return new SchwabHybridMarketDataProvider(schwab, env, historySymbols);
 }
 
