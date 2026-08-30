@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { marketPulseState } from '../src/intelligence/marketPulse.js';
 import { correlateGovernmentTrades } from '../src/intelligence/correlation.js';
 import { translateAssetDecision } from '../src/intelligence/decisionTranslator.js';
+import { classifyEvent, sectorForText } from '../src/intelligence/taxonomy.js';
+import { modelFractionalAdd } from '../src/strategy/dca.js';
 import type { IntelligenceEvent, IntelligencePulse, MarketPulseTickerItem } from '../src/intelligence/types.js';
 
 const SEMI_PULSE: IntelligencePulse = {
@@ -31,6 +33,40 @@ describe('Market Pulse normalization', () => {
     expect(marketPulseState(3.1, 4.0)).toBe('Improving');
     expect(marketPulseState(-4.2, -2.0)).toBe('Defensive');
     expect(marketPulseState(null, null)).toBe('Unavailable');
+  });
+});
+
+describe('shipping analyst classification', () => {
+  it('recognizes J Mintzmyer as a Shipping analyst reference through permitted downstream sources', () => {
+    expect(sectorForText('J Mintzmyer discusses the outlook for maritime equities.')).toBe('shipping');
+    expect(classifyEvent('J Mintzmyer discusses the outlook for maritime equities.', 'shipping').eventType).toBe('SHIPPING_ANALYST_VIEW');
+  });
+
+  it('keeps a specific freight-cycle signal ahead of the generic analyst-view tag', () => {
+    expect(classifyEvent('J Mintzmyer says dry bulk is strong and the recovery is accelerating.', 'shipping').eventType).toBe('DRY_BULK_TIGHTENING');
+  });
+});
+
+describe('fractional DCA arithmetic', () => {
+  it('shows when an add lowers average cost', () => {
+    const model = modelFractionalAdd({ price: 80, dollars: 50, currentShares: 2, currentCostBasisTotal: 200, costBasisKnown: true });
+    expect(model?.estimatedShares).toBeCloseTo(0.625, 6);
+    expect(model?.currentAverageCost).toBeCloseTo(100, 6);
+    expect(model?.projectedAverageCost).toBeCloseTo(95.238095, 5);
+    expect(model?.averageCostEffect).toBe('lower');
+  });
+
+  it('does not call ordinary DCA averaging down when the new price is above basis', () => {
+    const model = modelFractionalAdd({ price: 120, dollars: 50, currentShares: 2, currentCostBasisTotal: 200, costBasisKnown: true });
+    expect(model?.averageCostEffect).toBe('raise');
+    expect(model?.projectedAverageCost).toBeGreaterThan(model?.currentAverageCost ?? 0);
+  });
+
+  it('establishes a starting basis for a new fractional position', () => {
+    const model = modelFractionalAdd({ price: 200, dollars: 50, currentShares: 0, currentCostBasisTotal: 0, costBasisKnown: true });
+    expect(model?.estimatedShares).toBeCloseTo(0.25, 6);
+    expect(model?.averageCostEffect).toBe('establish');
+    expect(model?.projectedAverageCost).toBeCloseTo(200, 6);
   });
 });
 

@@ -10,6 +10,13 @@ const SECTOR_LABEL: Record<MarketPulseTickerItem['sector'], string> = {
   technology: 'TECHNOLOGY',
 };
 
+const EXPECTED_BENCHMARKS: Record<MarketPulseTickerItem['sector'], { primary: string; confirmation: string }> = {
+  shipping: { primary: 'BDI', confirmation: 'BDRY' },
+  semiconductors: { primary: 'SOX', confirmation: 'SOXX' },
+  energy: { primary: 'WTI + Brent', confirmation: 'XLE' },
+  technology: { primary: 'NDX', confirmation: 'XLK' },
+};
+
 function tone(state: MarketPulseTickerItem['state']): 'positive' | 'warning' | 'negative' | 'neutral' {
   if (state === 'Improving' || state === 'Constructive') return 'positive';
   if (state === 'Weakening') return 'warning';
@@ -37,23 +44,33 @@ export function MarketPulseTicker({ items }: { items: MarketPulseTickerItem[] })
           const move5 = average(item.benchmarks.map((leg) => leg.return5d));
           const displayMove = move30 ?? move5;
           const window = move30 != null ? '30d' : move5 != null ? '5d' : null;
-          const benchmark = item.benchmarks.map((leg) => leg.name).join(' + ') || 'Benchmark unavailable';
+          const expected = EXPECTED_BENCHMARKS[item.sector];
+          const benchmark = item.benchmarks.map((leg) => leg.name).join(' + ');
+          const unavailable = item.dataRole === 'unavailable' || !item.benchmarks.length;
           return (
             <div key={item.sector} className="panel">
               <div className="row" style={{ justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
                 <strong>{SECTOR_LABEL[item.sector]}</strong>
                 <Badge tone={tone(item.state)} glyph={arrow(item.state)}>{item.state}</Badge>
               </div>
-              <p style={{ margin: '10px 0 4px' }}><strong>{benchmark}</strong>{displayMove != null && window ? ` · ${formatPct(displayMove / 100, 1)} ${window}` : ''}</p>
-              <p className="meta">{item.summary}</p>
+              <p style={{ margin: '10px 0 4px' }}>
+                <strong>{unavailable ? `Waiting for ${expected.primary}` : benchmark}</strong>
+                {!unavailable && displayMove != null && window ? ` · ${formatPct(displayMove / 100, 1)} ${window}` : ''}
+              </p>
+              {unavailable ? (
+                <>
+                  <p className="meta">Primary sector benchmark: <strong>{expected.primary}</strong> via TradingEconomics. Liquid confirmation: <strong>{expected.confirmation}</strong> via the private OpenBB service.</p>
+                  <p className="meta">The sector is intentionally marked unavailable until real benchmark data arrives; DAHCorp does not convert missing data into a neutral market opinion.</p>
+                </>
+              ) : <p className="meta">{item.summary}</p>}
               {item.confirmation ? (
-                <p className="meta"><strong>Confirmation:</strong> {item.confirmation.symbol}{item.confirmation.return30d != null ? ` ${formatPct(item.confirmation.return30d / 100, 1)} 30d` : ''} via OpenBB.</p>
-              ) : item.dataRole === 'proxy_fallback' ? <p className="meta"><strong>Proxy-only read.</strong> Primary benchmark is not available.</p> : null}
+                <p className="meta"><strong>OpenBB confirmation:</strong> {item.confirmation.symbol}{item.confirmation.return30d != null ? ` ${formatPct(item.confirmation.return30d / 100, 1)} 30d` : ''}.</p>
+              ) : !unavailable && item.dataRole === 'proxy_fallback' ? <p className="meta"><strong>Proxy-only read.</strong> Primary benchmark is not available.</p> : null}
             </div>
           );
         })}
       </div>
-      <p className="meta" style={{ marginTop: 12 }}>Primary macro benchmarks describe the weather. They never dictate a trade by themselves; asset price, trend, portfolio fit and deterministic risk still control the decision.</p>
+      <p className="meta" style={{ marginTop: 12 }}>Market Pulse is the four-sector synopsis: Shipping (BDI), Semiconductors (SOX), Energy (WTI/Brent) and Technology (NDX), with liquid OpenBB proxies used as confirmation. These benchmarks describe the weather; they never dictate a trade by themselves.</p>
     </Card>
   );
 }

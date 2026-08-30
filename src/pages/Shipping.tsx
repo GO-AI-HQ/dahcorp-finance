@@ -7,6 +7,7 @@ import { Card } from '../components/Card.js';
 import { Badge } from '../components/Badge.js';
 import { ErrorState, LoadingCards } from '../components/States.js';
 import { SHIPPING_INTELLIGENCE_SYMBOLS } from '../intelligence/taxonomy.js';
+import { SHIPPING_ANALYST_REFERENCES } from '../intelligence/shippingAnalysts.js';
 import { formatMoney } from '../core/format.js';
 
 function tone(value: string): 'positive' | 'warning' | 'negative' | 'neutral' {
@@ -42,15 +43,15 @@ export function Shipping() {
       : 'WAIT / WATCH THE CYCLE';
 
   const modelTo = highImpact
-    ? `/modeling-lab?event=${encodeURIComponent(highImpact.fingerprint)}&question=${encodeURIComponent('Given the current shipping cycle, freight/vessel evidence, specialist commentary and my Maritime holdings, should I add to an existing shipping position, rotate among shipping names, or hold Maritime cash?')}`
-    : `/modeling-lab?question=${encodeURIComponent('Given my current Maritime holdings and available shipping cash, should I add to an existing shipping position, rotate among shipping names, or hold cash?')}`;
+    ? `/modeling-lab?event=${encodeURIComponent(highImpact.fingerprint)}&question=${encodeURIComponent('Given the current shipping cycle, freight/vessel evidence, specialist commentary from the named Shipping analyst watchlist and my Maritime holdings, should I add to an existing shipping position, rotate among shipping names, or hold Maritime cash? Treat analyst commentary as corroborative context, not a standalone trade trigger.')}`
+    : `/modeling-lab?question=${encodeURIComponent('Given my current Maritime holdings, available shipping cash and the named Shipping analyst watchlist, should I add to an existing shipping position, rotate among shipping names, or hold cash? Treat commentary as corroborative context, not a standalone trade trigger.')}`;
 
   return (
     <>
       <PageHead
         eyebrow="Growth · Shipping"
         title="Maritime / Shipping"
-        lede="Shipping is treated as a cyclical specialist strategy. Freight rates, vessel supply, orderbooks, rerouting, sanctions and specialist commentary are reconciled before DAHCorp proposes a move. Commentary alone is never a trade trigger."
+        lede="Shipping is treated as a cyclical specialist strategy. Freight rates, vessel supply, orderbooks, rerouting, sanctions and specialist commentary are reconciled before DAHCorp proposes a move. Christopher Vonheim, Sal Mercogliano and J Mintzmyer are tracked as named specialist sources; commentary alone is never a trade trigger."
         action={pulse ? <Badge tone={tone(pulse.label)}>{pulse.label}</Badge> : <Badge tone="neutral">Building evidence</Badge>}
       />
 
@@ -58,7 +59,7 @@ export function Shipping() {
         <Card label="Current decision" title={decision}><p className="meta">The cycle can change quickly; DAHCorp prefers explicit entry/rotation logic over permanent buy-and-hold assumptions.</p></Card>
         <Card label="Maritime Cash Queue" title={formatMoney(maritimeCash)}><p className="meta">Schwab cash explicitly attached to the Maritime mandate. It is separate from Income account 3085.</p></Card>
         <Card label="Shipping holdings" title={`${positions.length} position${positions.length === 1 ? '' : 's'}`}><p className="meta">{positions.length ? positions.map((position) => position.symbol).join(' · ') : 'No confirmed shipping position is currently attached to the Maritime mandate.'}</p></Card>
-        <Card label="Evidence mix" title={`${marketEvidence.length} market/policy · ${specialistEvidence.length} specialist`}><p className="meta">Specialist views are useful because shipping is niche, but higher-authority market/policy evidence must corroborate an actionable conclusion.</p></Card>
+        <Card label="Evidence mix" title={`${marketEvidence.length} market/policy · ${specialistEvidence.length} specialist events`}><p className="meta">{SHIPPING_ANALYST_REFERENCES.length} named specialists are on the research watchlist. Their views can strengthen or challenge a thesis, but market/freight/company evidence must corroborate an actionable conclusion.</p></Card>
       </div>
 
       <Card label="Maritime decision engine" title="What would make a Shipping move actionable?">
@@ -75,9 +76,27 @@ export function Shipping() {
       </Card>
 
       <div className="grid grid--2 section">
-        <Card label="Specialist commentary" title="What niche shipping analysts are saying">
+        <Card label="Specialist commentary" title="Analyst watchlist + current views">
+          <div className="stack stack--tight">
+            {SHIPPING_ANALYST_REFERENCES.map((analyst) => (
+              <div key={analyst.name} className="panel">
+                <div className="row" style={{ justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+                  <strong>{analyst.shortName}</strong>
+                  <Badge tone={analyst.automation === 'public_feed' ? 'positive' : 'warning'}>{analyst.automation === 'public_feed' ? 'Permitted public feed' : 'Curated research'}</Badge>
+                </div>
+                <p className="meta">{analyst.focus}</p>
+                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                  <a className="btn btn--sm btn--ghost" href={analyst.homepage} target="_blank" rel="noreferrer">Open source</a>
+                  {analyst.social ? <a className="btn btn--sm btn--ghost" href={analyst.social} target="_blank" rel="noreferrer">Open social</a> : null}
+                </div>
+                {analyst.automation === 'curated_reference' ? <p className="meta" style={{ marginTop: 8 }}>Not auto-scraped. The supplied Seeking Alpha RSS terms restrict commercial feed use, so Mintzmyer enters DAHCorp through permitted downstream mentions or manual research.</p> : null}
+              </div>
+            ))}
+          </div>
+
           {specialistEvidence.length ? (
-            <div className="stack stack--tight">
+            <div className="stack stack--tight" style={{ marginTop: 14 }}>
+              <p className="card__label"><span>Recent permitted analyst evidence</span></p>
               {specialistEvidence.slice(0, 8).map((event) => (
                 <div key={event.fingerprint}>
                   <strong>{event.headline}</strong>
@@ -86,7 +105,7 @@ export function Shipping() {
                 </div>
               ))}
             </div>
-          ) : <p className="meta">No recent specialist-feed item is stored yet. Public feeds are probed during intelligence refresh; missing commentary is not interpreted as neutral.</p>}
+          ) : <p className="meta" style={{ marginTop: 12 }}>No recent permitted specialist item is stored yet. Missing commentary is not interpreted as neutral.</p>}
         </Card>
 
         <Card label="Market + policy evidence" title="What can corroborate or contradict the commentary">

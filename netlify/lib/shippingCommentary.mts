@@ -1,5 +1,6 @@
 import type { IntelligenceEvent, IntelligenceProviderStatus } from '../../src/intelligence/types.js';
 import { classifyEvent, sectorForText, symbolsForText } from '../../src/intelligence/taxonomy.js';
+import { SHIPPING_ANALYST_REFERENCES } from '../../src/intelligence/shippingAnalysts.js';
 
 interface FeedSource {
   name: string;
@@ -119,6 +120,7 @@ async function fetchSource(source: FeedSource): Promise<{ events: IntelligenceEv
 export async function fetchShippingCommentary(): Promise<{ events: IntelligenceEvent[]; status: IntelligenceProviderStatus }> {
   const rows = await Promise.all(SOURCES.map(fetchSource));
   const live = rows.filter((row) => row.ok).length;
+  const curated = SHIPPING_ANALYST_REFERENCES.filter((source) => source.automation === 'curated_reference').map((source) => source.shortName);
   return {
     events: rows.flatMap((row) => row.events),
     status: {
@@ -126,8 +128,8 @@ export async function fetchShippingCommentary(): Promise<{ events: IntelligenceE
       connected: live > 0,
       status: live === SOURCES.length ? 'live' : live ? 'partial' : 'unavailable',
       note: live
-        ? `${live}/${SOURCES.length} public maritime commentary feeds are active. These sources are context only and require corroboration by market, freight, company or policy evidence.`
-        : 'Public maritime commentary feeds are currently unavailable; no commentary is treated as evidence until a feed returns successfully.',
+        ? `${live}/${SOURCES.length} permitted public maritime commentary feeds are active. ${SHIPPING_ANALYST_REFERENCES.length} named specialists are tracked; curated-only: ${curated.join(', ')}. Commentary remains context only and requires corroboration by market, freight, company or policy evidence.`
+        : `Public maritime commentary feeds are currently unavailable. ${SHIPPING_ANALYST_REFERENCES.length} named specialists remain in the research watchlist; curated-only: ${curated.join(', ')}. No commentary is treated as evidence until sourced through a permitted channel.`,
     },
   };
 }

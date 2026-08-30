@@ -42,11 +42,11 @@ export function SemiconductorGrowth() {
   const headline = restrictiveIntel
     ? 'WAIT — policy evidence argues for caution'
     : best
-      ? `${best.symbol} — buy zone reached; model the amount before buying`
-      : 'WAIT — no core semiconductor entry currently qualifies';
+      ? `${best.symbol} — setup qualifies for allocation modeling`
+      : 'WAIT — no core semiconductor allocation currently qualifies';
   const modelQuestion = best
-    ? `A ${best.symbol} semiconductor buy zone is active. Compare buying ${best.symbol}, holding Growth cash, and any permitted tactical alternative such as SOXL/TSMX. Recommend the specific dollar amount only if the move improves the strategy after current policy and market evidence.`
-    : 'Review the semiconductor Growth mandate. Should I hold cash, accumulate a core name, or prepare a tactical semiconductor trade? Do not manufacture a transaction if no setup qualifies.';
+    ? `A ${best.symbol} semiconductor buy zone is active. Compare a fractional/DCA add to ${best.symbol}, holding Growth cash, and any permitted tactical alternative such as SOXL/TSMX. Use current holdings, cost basis, account cash, portfolio overlap and intelligence. Recommend a specific dollar amount and estimated fractional shares only if the move improves the strategy; the buy-zone flag itself is not a buy instruction.`
+    : 'Review the semiconductor Growth mandate. Should I hold cash, accumulate a core name through fractional/DCA purchases, or prepare a tactical semiconductor trade? Use current holdings, cost basis and account cash. Do not manufacture a transaction if no setup qualifies.';
   const modelTo = `/modeling-lab?question=${encodeURIComponent(modelQuestion)}`;
 
   return (
@@ -54,19 +54,19 @@ export function SemiconductorGrowth() {
       <PageHead
         eyebrow="Growth · Semiconductors"
         title="Semiconductor growth"
-        lede="DAHCorp combines price opportunity, market health, policy/news intelligence and available Growth cash before recommending a decision."
+        lede="DAHCorp combines price opportunity, market health, policy/news intelligence, current holdings and available Growth cash before recommending a decision. A buy zone means the security is eligible to model—not that it should be purchased automatically."
         action={<Badge tone={best && !restrictiveIntel ? 'positive' : restrictiveIntel ? 'warning' : 'neutral'}>{best && !restrictiveIntel ? 'Opportunity developing' : 'Watching'}</Badge>}
       />
 
       <Card label="Current decision" title={headline}>
         <div className="grid grid--4">
-          <div className="panel"><span className="soft">Growth Cash Queue</span><strong style={{ display: 'block', marginTop: 4 }}>{formatMoney(growthCash)}</strong><p className="meta">Cash may remain idle indefinitely.</p></div>
+          <div className="panel"><span className="soft">Growth Cash Queue</span><strong style={{ display: 'block', marginTop: 4 }}>{formatMoney(growthCash)}</strong><p className="meta">Cash may remain idle or combine with future contributions for fractional accumulation.</p></div>
           <div className="panel"><span className="soft">Market Intelligence</span><strong style={{ display: 'block', marginTop: 4 }}>{pulse?.label ?? 'Building evidence'}</strong><p className="meta">Policy: {pulse?.policy ?? 'unknown'} · News: {pulse?.newsPressure ?? 'unknown'}</p></div>
           <div className="panel"><span className="soft">Best price setup</span><strong style={{ display: 'block', marginTop: 4 }}>{best?.symbol ?? 'None qualified'}</strong><p className="meta">{best ? `${formatPct(best.dip.declineFromReference ?? 0, 1)} below its reference.` : 'A decline alone is not enough.'}</p></div>
-          <div className="panel"><span className="soft">Recommended amount</span><strong style={{ display: 'block', marginTop: 4 }}>Modeling Lab decides</strong><p className="meta">The amount comes from live cash, portfolio overlap, evidence and risk—not an arbitrary tranche percentage.</p></div>
+          <div className="panel"><span className="soft">Allocation amount</span><strong style={{ display: 'block', marginTop: 4 }}>Modeling Lab decides</strong><p className="meta">The amount comes from live cash, current shares/cost basis, overlap, evidence and risk—not an arbitrary tranche percentage.</p></div>
         </div>
         <div className="row" style={{ gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
-          <Link className="btn btn--sm btn--gold" to={modelTo}>Build Proposed Model</Link>
+          <Link className="btn btn--sm btn--gold" to={modelTo}>Build Proposed Allocation</Link>
           <Link className="btn btn--sm btn--ghost" to="/portfolio">Open Growth Cash Queue</Link>
           <Link className="btn btn--sm btn--ghost" to="/intelligence">Why the market view?</Link>
         </div>
@@ -79,15 +79,20 @@ export function SemiconductorGrowth() {
             : row.trend.status !== 'TREND_CONFIRMED'
               ? 'WATCH'
               : row.dip.actionable
-                ? 'MODEL ENTRY'
+                ? 'ELIGIBLE TO MODEL'
                 : 'WAIT';
-          const rowModelTo = `/modeling-lab?symbol=${encodeURIComponent(row.symbol)}&side=buy&question=${encodeURIComponent(`Should I buy ${row.symbol} now from the Robinhood Growth Cash Queue? Compare the proposed purchase with holding cash and recommend a dollar amount only if the deterministic setup and intelligence support it.`)}`;
+          const position = p.positions.find((item) => item.symbol === row.symbol) ?? null;
+          const holdingSummary = position
+            ? `${position.shares.toFixed(position.shares >= 1 ? 3 : 5)} sh${position.costBasisKnown && position.costBasisPerShare != null ? ` · ${formatMoney(position.costBasisPerShare)} avg cost` : ''}`
+            : 'No confirmed position';
+          const rowModelTo = `/modeling-lab?symbol=${encodeURIComponent(row.symbol)}&side=buy&question=${encodeURIComponent(`Should I make a fractional/DCA add to ${row.symbol} now from the Robinhood Growth Cash Queue? Current holding: ${holdingSummary}. Growth cash: ${formatMoney(growthCash)}. Compare the proposed purchase with holding cash, and if an add improves the plan give the exact dollar amount, estimated fractional shares, projected average cost and remaining cash. Do not treat the buy-zone flag as an automatic trade.`)}`;
           return (
-            <Card key={row.symbol} label={`${row.symbol} · Core growth`} title={decision} action={<Badge tone={decision === 'MODEL ENTRY' ? 'positive' : 'neutral'}>{row.dip.actionable ? 'Buy zone reached' : 'No buy zone'}</Badge>}>
+            <Card key={row.symbol} label={`${row.symbol} · Core growth`} title={decision} action={<Badge tone={decision === 'ELIGIBLE TO MODEL' ? 'positive' : 'neutral'}>{row.dip.actionable ? 'Buy zone reached' : 'No buy zone'}</Badge>}>
               <p><strong>{plainTrend(row.trend.status)}</strong></p>
               <p className="meta">Price {formatMoney(row.price)} · {row.dip.declineFromReference == null ? 'reference unavailable' : `${formatPct(row.dip.declineFromReference, 1)} below reference`}.</p>
-              <p className="meta">{row.dip.actionable && row.trend.status === 'TREND_CONFIRMED' ? 'The price has reached a planned entry zone without breaking the deterministic trend framework.' : 'One or more conditions needed for a staged entry are still missing.'}</p>
-              {decision === 'MODEL ENTRY' ? <p style={{ marginTop: 10 }}><Link className="btn btn--sm btn--ghost" to={rowModelTo}>Model {row.symbol} amount</Link></p> : null}
+              <p className="meta"><strong>Portfolio:</strong> {holdingSummary} · Growth cash {formatMoney(growthCash)}.</p>
+              <p className="meta">{row.dip.actionable && row.trend.status === 'TREND_CONFIRMED' ? 'The price has reached a planned zone without breaking trend. That opens allocation modeling; it does not decide whether or how much to buy.' : 'One or more conditions needed before allocation modeling are still missing.'}</p>
+              {decision === 'ELIGIBLE TO MODEL' ? <p style={{ marginTop: 10 }}><Link className="btn btn--sm btn--ghost" to={rowModelTo}>Model {row.symbol} DCA / entry amount</Link></p> : null}
             </Card>
           );
         })}
