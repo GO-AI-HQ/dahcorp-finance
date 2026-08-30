@@ -18,10 +18,10 @@ const LEVERAGED = new Set(['SOXL', 'TSMX']);
 
 export function sectorForDecisionSymbol(symbol: string): Exclude<IntelligenceSector, 'cross_market'> | null {
   const upper = symbol.toUpperCase();
-  if (SEMICONDUCTOR_INTELLIGENCE_SYMBOLS.includes(upper as never)) return 'semiconductors';
-  if (ENERGY_INTELLIGENCE_SYMBOLS.includes(upper as never)) return 'energy';
-  if (SHIPPING_INTELLIGENCE_SYMBOLS.includes(upper as never)) return 'shipping';
-  if (TECHNOLOGY_INTELLIGENCE_SYMBOLS.includes(upper as never)) return 'technology';
+  if ((SEMICONDUCTOR_INTELLIGENCE_SYMBOLS as readonly string[]).includes(upper)) return 'semiconductors';
+  if ((ENERGY_INTELLIGENCE_SYMBOLS as readonly string[]).includes(upper)) return 'energy';
+  if ((SHIPPING_INTELLIGENCE_SYMBOLS as readonly string[]).includes(upper)) return 'shipping';
+  if ((TECHNOLOGY_INTELLIGENCE_SYMBOLS as readonly string[]).includes(upper)) return 'technology';
   return null;
 }
 
@@ -83,7 +83,7 @@ export function translateAssetDecision(
 
   const modelQuestion = action === 'BUY' || action === 'ADD'
     ? `Model a ${action.toLowerCase()} decision for ${symbol}. Compare deploying capital now with holding the relevant Cash Queue, account for sector benchmark conditions, current holdings, overlap and deterministic risk, and recommend a dollar amount only if the move improves the active strategy.`
-    : action === 'REDUCE' || action === 'SELL'
+    : action === 'REDUCE'
       ? `Model whether ${symbol} should be reduced. Compare keeping the current exposure with reducing it, include current sector conditions and portfolio overlap, and stage a sell only if deterministic risk and the active strategy support it.`
       : `Model the current ${symbol} ${action.toLowerCase()} decision. Explain what specific price, trend or intelligence condition would need to change before capital should move.`;
 
