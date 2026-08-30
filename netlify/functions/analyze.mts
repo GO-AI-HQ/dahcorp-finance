@@ -3,7 +3,7 @@ import { requireSession } from '../lib/session.mts';
 import { buildServerContext } from '../lib/context.mts';
 import { buildPlan, buildSignalsPayload, investableCapital } from '../../src/services/analysis.js';
 import { buildAgentDigest } from '../../src/agent/digest.js';
-import { buildDeterministicBrief } from '../../src/agent/fallback.js';
+import { buildDeterministicBrief, buildSemanticModelUnavailableBrief, requiresSemanticModel } from '../../src/agent/fallback.js';
 import { STANDING_QUESTIONS } from '../../src/agent/prompt.js';
 import { requestAgentRecommendation } from '../lib/agentModel.mts';
 import { validateAllocation, validateOrders } from '../../src/risk/engine.js';
@@ -26,7 +26,9 @@ export default withErrorHandling('analyze', async (req: Request) => {
   const capital = Math.max(0, Math.min(requested, policyCapital));
   const plan = buildPlan(ctx, capital);
   const digest = buildAgentDigest({ ctx, plan, opportunities: signals.opportunities, semis: signals.semis, drag: signals.drag, capital });
-  const deterministicBrief = buildDeterministicBrief({ ctx, plan, opportunities: signals.opportunities, semis: signals.semis, drag: signals.drag, question });
+  const deterministicBrief = requiresSemanticModel(question)
+    ? buildSemanticModelUnavailableBrief(question, capital)
+    : buildDeterministicBrief({ ctx, plan, opportunities: signals.opportunities, semis: signals.semis, drag: signals.drag, question });
   const agent = await requestAgentRecommendation({ question, digest, capital, config: ctx.config, deterministicBrief });
 
   const riskContext = { asOf: ctx.snapshot.asOf, analysis: ctx.analysis, income: ctx.income, quotes: ctx.snapshot.quotes, config: ctx.config };
