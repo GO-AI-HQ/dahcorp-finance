@@ -23,6 +23,7 @@ import type { RecommendationBrief, AgentSource } from '../agent/types.js';
 import type { IntelligenceEvent } from '../intelligence/types.js';
 
 const BASE = '/.netlify/functions';
+const ANALYZE_POLL_TIMEOUT_MS = 8 * 60_000;
 
 export class ApiError extends Error {
   constructor(
@@ -53,7 +54,21 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   const text = await response.text();
-  const body = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+  let body: Record<string, unknown> = {};
+  if (text) {
+    try {
+      body = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      if (!response.ok) {
+        throw new ApiError(
+          `The service returned HTTP ${response.status} without a JSON error envelope.`,
+          response.status,
+          'NON_JSON_RESPONSE',
+        );
+      }
+      throw new ApiError('The service returned an invalid response.', response.status, 'INVALID_JSON');
+    }
+  }
 
   if (!response.ok) {
     const error = (body.error ?? {}) as { code?: string; message?: string };
@@ -98,6 +113,7 @@ export interface SessionResponse {
 
 export interface AnalyzeResponse {
   asOf: string;
+  modelInputAsOf?: string;
   containsMockData: boolean;
   sourceNotes: string[];
   recommendationId: number | null;
@@ -113,6 +129,52 @@ export interface AnalyzeResponse {
   baseline: { plan: AllocationPlan; riskDecision: RiskDecision };
   executionEnabled: boolean;
   phaseNote: string;
+}
+
+interface AnalyzePendingResponse {
+  pending: true;
+  status: string;
+  jobToken: string;
+  asOf: string;
+  question: string;
+  capital: number;
+  model: string | null;
+}
+
+type AnalyzePollResponse = AnalyzeResponse | AnalyzePendingResponse;
+
+function isAnalyzePending(value: AnalyzePollResponse): value is AnalyzePendingResponse {
+  return 'pending' in value && value.pending === true;
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function analyzeWithPolling(question: string, capital?: number): Promise<AnalyzeResponse> {
+  let response = await request<AnalyzePollResponse>('/analyze', {
+    method: 'POST',
+    body: JSON.stringify({ question, capital }),
+  });
+  if (!isAnalyzePending(response)) return response;
+
+  const deadline = Date.now() + ANALYZE_POLL_TIMEOUT_MS;
+  let delayMs = 1500;
+  while (Date.now() < deadline) {
+    await wait(delayMs);
+    response = await request<AnalyzePollResponse>('/analyze-status', {
+      method: 'POST',
+      body: JSON.stringify({ jobToken: response.jobToken }),
+    });
+    if (!isAnalyzePending(response)) return response;
+    delayMs = Math.min(3000, delayMs + 250);
+  }
+
+  throw new ApiError(
+    'The Treasury strategist is still processing. Please try again in a moment.',
+    408,
+    'ANALYSIS_POLL_TIMEOUT',
+  );
 }
 
 export interface ModelStrategyResponse {
@@ -307,8 +369,7 @@ export const api = {
   simulate: (body: SimulatorRequest) =>
     request<SimulationResponse>('/simulate', { method: 'POST', body: JSON.stringify(body) }),
 
-  analyze: (question: string, capital?: number) =>
-    request<AnalyzeResponse>('/analyze', { method: 'POST', body: JSON.stringify({ question, capital }) }),
+  analyze: (question: string, capital?: number) => analyzeWithPolling(question, capital),
   modelStrategy: (body: { question: string; eventFingerprint?: string | null; capital?: number; horizonMonths?: number }) =>
     request<ModelStrategyResponse>('/model-strategy', { method: 'POST', body: JSON.stringify(body) }),
   adoptStrategy: (recommendationId: number, eventFingerprint?: string | null) =>
