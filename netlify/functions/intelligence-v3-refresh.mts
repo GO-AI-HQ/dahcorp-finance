@@ -1,5 +1,6 @@
 import type { Config } from '@netlify/functions';
 import { refreshAdvancedEvidenceFabric } from '../lib/intelligenceV3.mts';
+import { refreshCashYieldBenchmark } from '../lib/cashYieldBenchmark.mts';
 
 /**
  * Hourly production evidence refresh for Intelligence Fabric v3.
@@ -7,8 +8,11 @@ import { refreshAdvancedEvidenceFabric } from '../lib/intelligenceV3.mts';
  * execution can be initiated from the refresh job.
  */
 export default async () => {
-  const { fabric, persisted } = await refreshAdvancedEvidenceFabric();
-  console.log(`[dahcorp] fabric v3 refresh: coverage=${fabric.fusion.coveragePct}% persisted=${persisted}.`);
+  const [{ fabric, persisted }, cashBenchmark] = await Promise.all([
+    refreshAdvancedEvidenceFabric(),
+    refreshCashYieldBenchmark(),
+  ]);
+  console.log(`[dahcorp] fabric v3 refresh: coverage=${fabric.fusion.coveragePct}% persisted=${persisted} cashBenchmark=${cashBenchmark.event ? 'live' : 'unavailable'}.`);
 };
 
 export const config: Config = {
