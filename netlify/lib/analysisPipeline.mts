@@ -8,9 +8,16 @@ import { getInstrumentOrFallback } from '../../src/core/universe.js';
 import { recordAudit, saveRecommendation } from './store.mts';
 import type { ProposedOrder } from '../../src/risk/types.js';
 import type { AgentRequest } from './agentModel.mts';
+import { buildMarketIntelligencePayload } from './intelligenceEngine.mts';
 
 export async function prepareAnalysis(question: string, requestedCapital?: number) {
-  const ctx = await buildServerContext();
+  // Read the latest persisted production intelligence in parallel with the
+  // portfolio snapshot. Provider refreshes happen on the hourly observer so an
+  // Analyze request never blocks on dozens of external intelligence calls.
+  const [ctx, intelligence] = await Promise.all([
+    buildServerContext(),
+    buildMarketIntelligencePayload({ refresh: false, limit: 100 }),
+  ]);
   const signals = buildSignalsPayload(ctx);
   const policyCapital = investableCapital(ctx);
   const requested = typeof requestedCapital === 'number' && Number.isFinite(requestedCapital) ? requestedCapital : policyCapital;
@@ -32,7 +39,26 @@ export async function prepareAnalysis(question: string, requestedCapital?: numbe
     drag: signals.drag,
     question,
   });
-  return { ctx, signals, capital, plan, digest, deterministicBrief };
+
+  // Deliberately compact the evidence packet before it reaches an LLM. The
+  // complete ledger remains persisted; Terra receives the most decision-relevant
+  // recent evidence plus normalized macro/reference state and provenance.
+  const eventIntelligence = {
+    asOf: intelligence.asOf,
+    providers: intelligence.providers,
+    pulses: intelligence.pulses,
+    marketPulse: intelligence.marketPulse,
+    macroRegime: intelligence.macroRegime,
+    economicCalendar: intelligence.economicCalendar.slice(0, 24),
+    referenceRegistry: intelligence.referenceRegistry,
+    governmentTrading: intelligence.governmentTrading.slice(0, 20),
+    capitalSignals: intelligence.capitalSignals.slice(0, 20),
+    policyEvents: intelligence.policyEvents.slice(0, 20),
+    events: intelligence.events.slice(0, 60),
+    note: intelligence.note,
+  };
+
+  return { ctx, signals, capital, plan, digest, deterministicBrief, eventIntelligence };
 }
 
 export type PreparedAnalysis = Awaited<ReturnType<typeof prepareAnalysis>>;
@@ -43,6 +69,7 @@ export function agentRequestFor(question: string, prepared: PreparedAnalysis): A
     digest: prepared.digest,
     capital: prepared.capital,
     config: prepared.ctx.config,
+    eventIntelligence: prepared.eventIntelligence,
     deterministicBrief: prepared.deterministicBrief,
   };
 }
