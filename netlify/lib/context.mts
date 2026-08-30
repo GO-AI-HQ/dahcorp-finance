@@ -38,6 +38,20 @@ export interface ServerContext extends AnalysisContext {
   adapters: BrokerAdapter[];
 }
 
+function runtimeEnv(key: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (env[key] != null) return env[key];
+  try {
+    const netlify = (globalThis as typeof globalThis & { Netlify?: { env?: { get?: (name: string) => string | undefined } } }).Netlify;
+    return netlify?.env?.get?.(key);
+  } catch {
+    return undefined;
+  }
+}
+
+function productionDataOnly(env: NodeJS.ProcessEnv = process.env): boolean {
+  return runtimeEnv('DAHCORP_PRODUCTION_DATA_ONLY', env)?.trim().toLowerCase() === 'true';
+}
+
 function fallbackFromSource(source: PositionSource, broker: 'robinhood' | 'schwab'): BrokerAccountData {
   const ids = new Set(source.accounts.filter((account) => account.broker === broker).map((account) => account.id));
   return {
@@ -47,7 +61,23 @@ function fallbackFromSource(source: PositionSource, broker: 'robinhood' | 'schwa
   };
 }
 
-async function convergeLiveBrokerState(source: PositionSource, adapters: BrokerAdapter[]): Promise<PositionSource> {
+function unknownProductionSource(notes: string[]): PositionSource {
+  return {
+    origin: 'broker',
+    accounts: [],
+    holdings: [],
+    incomeEvents: [],
+    contributions: [],
+    corporateActions: [],
+    notes: [...new Set([
+      ...notes.filter((note) => !/seed|mock|fixture/i.test(note)),
+      'Production-data-only mode is active. Live brokerage state was unavailable, so seeded balances and positions were suppressed rather than substituted.',
+    ])],
+    containsMockData: false,
+  };
+}
+
+async function convergeLiveBrokerState(source: PositionSource, adapters: BrokerAdapter[], strictProduction = false): Promise<PositionSource> {
   let accounts = source.origin === 'seed' ? source.accounts.filter((account) => account.broker !== 'manual') : [...source.accounts];
   let holdings = source.origin === 'seed'
     ? source.holdings.filter((holding) => accounts.some((account) => account.id === holding.accountId))
@@ -65,7 +95,7 @@ async function convergeLiveBrokerState(source: PositionSource, adapters: BrokerA
       }
       const data = await adapter.getAccountData();
       if (!data.accounts.length) {
-        notes.push(`${adapter.label} authenticated but returned no accounts; the prior source was retained for that lane.`);
+        notes.push(`${adapter.label} authenticated but returned no accounts; no live state was promoted for that lane.`);
         continue;
       }
 
@@ -91,21 +121,28 @@ async function convergeLiveBrokerState(source: PositionSource, adapters: BrokerA
       notes.push(`${adapter.label} accounts, cash and positions are sourced live from the connected brokerage.`);
     } catch (error) {
       console.warn(`[dahcorp] ${adapter.label} live portfolio convergence failed:`, error instanceof Error ? error.message : 'unknown error');
-      notes.push(`${adapter.label} live portfolio state was unavailable; the prior stored source was retained for that lane.`);
+      notes.push(`${adapter.label} live portfolio state was unavailable.`);
     }
   }
 
-  if (!liveBrokers.size) return source;
+  if (!liveBrokers.size) {
+    if (strictProduction) return unknownProductionSource(notes);
+    return source;
+  }
 
-  if (source.origin === 'seed') {
+  if (source.origin === 'seed' || strictProduction) {
     const liveIds = new Set(accounts.filter((account) => account.dataQuality === 'live').map((account) => account.id));
     accounts = accounts.filter((account) => liveIds.has(account.id));
     holdings = holdings.filter((holding) => liveIds.has(holding.accountId));
   }
 
   const accountIds = new Set(accounts.map((account) => account.id));
-  const contributions = source.origin === 'seed' ? [] : source.contributions.filter((contribution) => accountIds.has(contribution.accountId));
-  const incomeEvents = source.origin === 'seed' ? null : source.incomeEvents?.filter((event) => accountIds.has(event.accountId)) ?? null;
+  const contributions = source.origin === 'seed' || strictProduction
+    ? source.contributions.filter((contribution) => accountIds.has(contribution.accountId) && source.origin !== 'seed')
+    : source.contributions.filter((contribution) => accountIds.has(contribution.accountId));
+  const incomeEvents = source.origin === 'seed'
+    ? []
+    : source.incomeEvents?.filter((event) => accountIds.has(event.accountId)) ?? [];
 
   return {
     origin: 'broker',
@@ -114,8 +151,8 @@ async function convergeLiveBrokerState(source: PositionSource, adapters: BrokerA
     incomeEvents,
     contributions,
     corporateActions: source.origin === 'seed' ? [] : source.corporateActions,
-    notes: [...new Set(notes.filter((note) => !note.startsWith('Positions are seeded MOCK fixtures')))],
-    containsMockData: accounts.some((account) => account.dataQuality === 'mock'),
+    notes: [...new Set(notes.filter((note) => !/seeded MOCK fixtures|fixture fallback/i.test(note)))],
+    containsMockData: false,
   };
 }
 
@@ -130,9 +167,6 @@ export function applyAccountMandates(source: PositionSource): PositionSource {
 
   const accounts = source.accounts.map((account) => {
     if (account.broker !== 'schwab') return account;
-    // The investor explicitly designated Schwab ...3085 as the taxable Income
-    // mandate. Existing YMAG ownership remains a compatibility signal if the
-    // broker label is ever reformatted.
     const incomeAuthorized = account.type === 'taxable' && (account.name.includes('3085') || ymAccounts.has(account.id));
     const shippingAuthorized = !incomeAuthorized && shippingAccounts.has(account.id);
     if (incomeAuthorized) {
@@ -169,11 +203,23 @@ export function applyAccountMandates(source: PositionSource): PositionSource {
   };
 }
 
+function unavailableProductionMarketProvider(): MarketDataProvider {
+  return {
+    id: 'production-market-unavailable',
+    isMock: false,
+    sourceNotes: ['No production market-data provider is currently reachable. Market values remain UNKNOWN; no synthetic fallback is permitted.'],
+    async getQuotes() { return {}; },
+    async getPriceHistory() { return {}; },
+    async getDistributions() { return []; },
+  };
+}
+
 export function selectMarketProvider(
   adapters: BrokerAdapter[],
   config: StrategyConfig,
   env: NodeJS.ProcessEnv = process.env,
 ): MarketDataProvider {
+  const strictProduction = productionDataOnly(env);
   const schwab = adapters.find(
     (adapter): adapter is SchwabAdapter => adapter.id === 'schwab' && adapter.isConfigured() && adapter.capabilities.includes('read_quotes'),
   );
@@ -183,7 +229,7 @@ export function selectMarketProvider(
     ...new Set([
       ...config.agenticGrowthAllowlist,
       config.trend.benchmarkSymbol,
-      'YMAG',
+      'YMAG', 'YMAX', 'NVDY',
       ...SEMICONDUCTOR_INTELLIGENCE_SYMBOLS,
       ...ENERGY_INTELLIGENCE_SYMBOLS,
       ...SHIPPING_INTELLIGENCE_SYMBOLS,
@@ -196,12 +242,15 @@ export function selectMarketProvider(
       ? new SchwabOpenBBMarketDataProvider(schwab, openbb, env, historySymbols)
       : openbb;
   }
-  if (!schwab) return mockMarketDataProvider;
-  return new SchwabHybridMarketDataProvider(schwab, env, historySymbols);
+  if (schwab) {
+    return new SchwabHybridMarketDataProvider(schwab, env, historySymbols, fetch, !strictProduction);
+  }
+  return strictProduction ? unavailableProductionMarketProvider() : mockMarketDataProvider;
 }
 
 export async function buildServerContext(options: { asOf?: string } = {}): Promise<ServerContext> {
   const asOf = options.asOf ?? todayISO();
+  const strictProduction = productionDataOnly();
   const [{ config, persisted, note }, storedSource, robinhoodGateway] = await Promise.all([
     loadStrategyConfig(),
     loadPositionSource(asOf),
@@ -214,7 +263,7 @@ export async function buildServerContext(options: { asOf?: string } = {}): Promi
     schwabTokenStore: { loadRefreshToken: loadSchwabRefreshToken, saveRefreshToken: saveSchwabRefreshToken },
   });
 
-  const converged = await convergeLiveBrokerState(storedSource, adapters);
+  const converged = await convergeLiveBrokerState(storedSource, adapters, strictProduction);
   const mandated = applyAccountMandates(converged);
   const source: PositionSource = config.externalLiquidityCurrent === 0
     ? { ...mandated, notes: [...mandated.notes, 'External household liquidity has not been confirmed; reserve status is shown as not entered rather than $0 underfunded.'] }
