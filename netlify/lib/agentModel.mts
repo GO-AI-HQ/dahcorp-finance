@@ -1,6 +1,7 @@
 import { RECOMMENDATION_TOOL, parseRecommendation } from '../../src/agent/schema.js';
 import type { AgentDigest } from '../../src/agent/digest.js';
 import type { AgentResult, RecommendationBrief } from '../../src/agent/types.js';
+import { openAIErrorDiagnostic, safeOpenAIErrorFromPayload, type SafeOpenAIError } from '../../src/agent/openaiDiagnostics.js';
 import type { StrategyConfig } from '../../src/core/config.js';
 import { requestRecommendation as requestClaudeRecommendation } from './claude.mts';
 
@@ -20,11 +21,6 @@ export interface AgentRequest {
 interface OpenAIResponsesPayload {
   output?: Array<{ type?: string; name?: string; arguments?: string }>;
   usage?: { input_tokens?: number; output_tokens?: number };
-}
-
-interface SafeOpenAIError {
-  type: string | null;
-  code: string | null;
 }
 
 interface OpenAIIdentityProbe {
@@ -119,43 +115,12 @@ function promptValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/**
- * OpenAI error bodies may contain arbitrary text. Only short identifier-shaped
- * values are allowed through the diagnostic boundary; raw messages, headers,
- * request data and credentials are never surfaced.
- */
-function safeOpenAIIdentifier(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const normalized = value.trim();
-  if (!/^[A-Za-z0-9_.:-]{1,80}$/.test(normalized)) return null;
-  return normalized;
-}
-
-export function safeOpenAIErrorFromPayload(payload: unknown): SafeOpenAIError {
-  if (!payload || typeof payload !== 'object') return { type: null, code: null };
-  const error = (payload as { error?: unknown }).error;
-  if (!error || typeof error !== 'object') return { type: null, code: null };
-  const record = error as { type?: unknown; code?: unknown };
-  return {
-    type: safeOpenAIIdentifier(record.type),
-    code: safeOpenAIIdentifier(record.code),
-  };
-}
-
 async function readSafeOpenAIError(response: Response): Promise<SafeOpenAIError> {
   try {
     return safeOpenAIErrorFromPayload(await response.json());
   } catch {
-    return { type: null, code: null };
+    return { type: null, code: null, param: null };
   }
-}
-
-function openAIErrorDiagnostic(error: SafeOpenAIError): string | null {
-  const parts = [
-    error.type ? `type=${error.type}` : null,
-    error.code ? `code=${error.code}` : null,
-  ].filter((part): part is string => Boolean(part));
-  return parts.length ? parts.join(', ') : null;
 }
 
 async function probeOpenAIIdentity(apiKey: string): Promise<OpenAIIdentityProbe> {
@@ -170,7 +135,7 @@ async function probeOpenAIIdentity(apiKey: string): Promise<OpenAIIdentityProbe>
     if (response.ok) {
       // Do not read or expose identity details. A 2xx response alone proves that
       // OpenAI accepted this exact credential at the authentication boundary.
-      return { status: response.status, authenticated: true, error: { type: null, code: null } };
+      return { status: response.status, authenticated: true, error: { type: null, code: null, param: null } };
     }
     return {
       status: response.status,
@@ -178,7 +143,7 @@ async function probeOpenAIIdentity(apiKey: string): Promise<OpenAIIdentityProbe>
       error: await readSafeOpenAIError(response),
     };
   } catch {
-    return { status: null, authenticated: null, error: { type: null, code: null } };
+    return { status: null, authenticated: null, error: { type: null, code: null, param: null } };
   }
 }
 
