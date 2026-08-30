@@ -22,6 +22,11 @@ interface OpenAIResponsesPayload {
   usage?: { input_tokens?: number; output_tokens?: number };
 }
 
+interface SafeOpenAIError {
+  type: string | null;
+  code: string | null;
+}
+
 const DEFAULT_OPENAI_MODEL = 'gpt-5.6-terra';
 const DEFAULT_OPENAI_PROMPT_ID = 'pmpt_6a9286ff3dbc8190b8c15ef4da2e001b0302504ca0de38ab';
 const DEFAULT_OPENAI_PROMPT_VERSION = '1';
@@ -95,15 +100,56 @@ function promptValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function safeOpenAIFailure(status: number): string {
-  if (status === 401) {
-    return 'OpenAI rejected the configured service-account credential. Confirm the Netlify DAHCORP_SERVICE_ACCOUNT_OPENAI_KEY is the secret value (not a label or a value prefixed with Bearer) and that the service account belongs to the same OpenAI project as the stored Treasury Strategist prompt.';
+/**
+ * OpenAI error bodies may contain arbitrary text. Only short identifier-shaped
+ * values are allowed through the diagnostic boundary; raw messages, headers,
+ * request data and credentials are never surfaced.
+ */
+function safeOpenAIIdentifier(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  if (!/^[A-Za-z0-9_.:-]{1,80}$/.test(normalized)) return null;
+  return normalized;
+}
+
+export function safeOpenAIErrorFromPayload(payload: unknown): SafeOpenAIError {
+  if (!payload || typeof payload !== 'object') return { type: null, code: null };
+  const error = (payload as { error?: unknown }).error;
+  if (!error || typeof error !== 'object') return { type: null, code: null };
+  const record = error as { type?: unknown; code?: unknown };
+  return {
+    type: safeOpenAIIdentifier(record.type),
+    code: safeOpenAIIdentifier(record.code),
+  };
+}
+
+async function readSafeOpenAIError(response: Response): Promise<SafeOpenAIError> {
+  try {
+    return safeOpenAIErrorFromPayload(await response.json());
+  } catch {
+    return { type: null, code: null };
   }
-  if (status === 403) return 'OpenAI authenticated the credential but the project/key is not permitted to use the requested resource or model.';
-  if (status === 404) return 'OpenAI authenticated the request but could not find the configured model or stored prompt in this project.';
-  if (status === 429) return 'OpenAI rate or project-spend limits prevented this request.';
-  if (status >= 500) return 'OpenAI is temporarily unavailable. The deterministic strategy brief is shown instead.';
-  return `The OpenAI request was rejected with status ${status}. The deterministic strategy brief is shown instead.`;
+}
+
+function openAIErrorDiagnostic(error: SafeOpenAIError): string | null {
+  const parts = [
+    error.type ? `type=${error.type}` : null,
+    error.code ? `code=${error.code}` : null,
+  ].filter((part): part is string => Boolean(part));
+  return parts.length ? parts.join(', ') : null;
+}
+
+function safeOpenAIFailure(status: number, providerError: SafeOpenAIError): string {
+  const diagnostic = openAIErrorDiagnostic(providerError);
+  const suffix = diagnostic ? ` OpenAI error: ${diagnostic}.` : '';
+  if (status === 401) {
+    return `OpenAI rejected the configured API credential (HTTP 401).${suffix} This is an authentication-layer failure; the deterministic strategy brief is shown instead.`;
+  }
+  if (status === 403) return `OpenAI authenticated the credential but denied access to the requested resource or model (HTTP 403).${suffix}`;
+  if (status === 404) return `OpenAI authenticated the request but could not find the configured model or stored prompt (HTTP 404).${suffix}`;
+  if (status === 429) return `OpenAI rate or project-spend limits prevented this request (HTTP 429).${suffix}`;
+  if (status >= 500) return `OpenAI is temporarily unavailable (HTTP ${status}).${suffix} The deterministic strategy brief is shown instead.`;
+  return `The OpenAI request was rejected with HTTP ${status}.${suffix} The deterministic strategy brief is shown instead.`;
 }
 
 async function requestOpenAIRecommendation(request: AgentRequest): Promise<AgentResult> {
@@ -162,13 +208,16 @@ async function requestOpenAIRecommendation(request: AgentRequest): Promise<Agent
     });
 
     if (!response.ok) {
-      // Provider bodies can echo request metadata. Only status class is logged.
-      console.error(`[dahcorp] OpenAI Responses request failed with status ${response.status}.`);
+      const providerError = await readSafeOpenAIError(response);
+      const diagnostic = openAIErrorDiagnostic(providerError);
+      console.error(
+        `[dahcorp] OpenAI Responses request failed with status ${response.status}${diagnostic ? ` (${diagnostic})` : ''}.`,
+      );
       return {
         brief: deterministicBrief,
         source: 'deterministic',
         model,
-        fallbackReason: safeOpenAIFailure(response.status),
+        fallbackReason: safeOpenAIFailure(response.status, providerError),
         usage: null,
       };
     }
