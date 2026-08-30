@@ -45,22 +45,16 @@ function isoDate(epochMs: number): string {
 }
 
 /**
- * Production quote/history provider backed by the already-authorized Schwab
- * Market Data API. Distribution history remains the labelled fixture provider
- * until a production distribution source is connected, so `isMock` stays true.
+ * Schwab quote/history provider.
  *
- * Strategy-driving symbols receive live Schwab daily history. Everything else
- * can fall back to fixture history so broad research screens stay usable without
- * turning every dashboard request into dozens of broker API calls.
+ * `allowMockFallback` exists only for local/demo compatibility. Production
+ * DAHCorp defaults it false so a provider failure becomes missing/UNKNOWN
+ * evidence, never a synthetic price, history series or distribution.
  */
 export class SchwabHybridMarketDataProvider implements MarketDataProvider {
-  readonly id = 'schwab-live-hybrid';
-  readonly isMock = true;
-  readonly sourceNotes = [
-    'Current equity quotes are sourced from Schwab Market Data Production when available.',
-    'Daily price history for the Agentic strategy universe is sourced from Schwab Market Data Production when available.',
-    'Distribution history remains synthetic until a production corporate-actions/distribution provider is connected; distribution-derived income projections remain model data.',
-  ];
+  readonly id: string;
+  readonly isMock: boolean;
+  readonly sourceNotes: string[];
 
   private readonly marketBaseUrl: string;
   private readonly liveHistorySymbols: Set<string>;
@@ -70,9 +64,23 @@ export class SchwabHybridMarketDataProvider implements MarketDataProvider {
     env: NodeJS.ProcessEnv = process.env,
     liveHistorySymbols: string[] = [],
     private readonly fetchImpl: typeof fetch = fetch,
+    private readonly allowMockFallback = false,
   ) {
     this.marketBaseUrl = (env.SCHWAB_MARKET_DATA_BASE_URL?.trim() || 'https://api.schwabapi.com/marketdata/v1').replace(/\/$/, '');
     this.liveHistorySymbols = new Set(liveHistorySymbols.map((symbol) => symbol.toUpperCase()));
+    this.id = allowMockFallback ? 'schwab-live-hybrid' : 'schwab-live-strict';
+    this.isMock = allowMockFallback;
+    this.sourceNotes = allowMockFallback
+      ? [
+          'Current equity quotes are sourced from Schwab Market Data Production when available.',
+          'Daily price history for the Agentic strategy universe is sourced from Schwab Market Data Production when available.',
+          'Fixture fallback is enabled for local/demo compatibility; distribution-derived projections can remain synthetic.',
+        ]
+      : [
+          'Current equity quotes are sourced from Schwab Market Data Production when available.',
+          'Daily price history for the Agentic strategy universe is sourced from Schwab Market Data Production when available.',
+          'Production-only mode is active: unavailable prices/history/distributions remain UNKNOWN and no fixture data is substituted.',
+        ];
   }
 
   private async authHeaders() {
@@ -82,7 +90,7 @@ export class SchwabHybridMarketDataProvider implements MarketDataProvider {
 
   async getQuotes(symbols: string[], asOf: string): Promise<Record<string, Quote>> {
     const normalized = [...new Set(symbols.map((symbol) => symbol.toUpperCase().trim()).filter(Boolean))];
-    const fallback = await mockMarketDataProvider.getQuotes(normalized, asOf);
+    const fallback = this.allowMockFallback ? await mockMarketDataProvider.getQuotes(normalized, asOf) : {};
     if (!normalized.length) return fallback;
 
     try {
@@ -120,14 +128,17 @@ export class SchwabHybridMarketDataProvider implements MarketDataProvider {
       }
       return out;
     } catch (error) {
-      console.warn('[dahcorp] Schwab live quote batch unavailable; using labelled fixture fallback.', error instanceof Error ? error.message : 'unknown error');
+      console.warn(
+        `[dahcorp] Schwab live quote batch unavailable; ${this.allowMockFallback ? 'using labelled fixture fallback' : 'leaving quotes UNKNOWN'}.`,
+        error instanceof Error ? error.message : 'unknown error',
+      );
       return fallback;
     }
   }
 
   async getPriceHistory(symbols: string[], asOf: string, days: number): Promise<Record<string, PriceBar[]>> {
     const normalized = [...new Set(symbols.map((symbol) => symbol.toUpperCase().trim()).filter(Boolean))];
-    const out = await mockMarketDataProvider.getPriceHistory(normalized, asOf, days);
+    const out = this.allowMockFallback ? await mockMarketDataProvider.getPriceHistory(normalized, asOf, days) : {};
     const strategySymbols = normalized.filter((symbol) => this.liveHistorySymbols.has(symbol));
     if (!strategySymbols.length) return out;
 
@@ -163,7 +174,10 @@ export class SchwabHybridMarketDataProvider implements MarketDataProvider {
             .sort((a, b) => a.date.localeCompare(b.date));
           if (bars.length >= 20) out[symbol] = bars.slice(-Math.max(days, 60));
         } catch (error) {
-          console.warn(`[dahcorp] Schwab price history unavailable for ${symbol}; using labelled fixture fallback.`, error instanceof Error ? error.message : 'unknown error');
+          console.warn(
+            `[dahcorp] Schwab price history unavailable for ${symbol}; ${this.allowMockFallback ? 'using labelled fixture fallback' : 'leaving history UNKNOWN'}.`,
+            error instanceof Error ? error.message : 'unknown error',
+          );
         }
       }),
     );
@@ -172,6 +186,6 @@ export class SchwabHybridMarketDataProvider implements MarketDataProvider {
   }
 
   async getDistributions(symbols: string[], asOf: string, days: number): Promise<DistributionEvent[]> {
-    return mockMarketDataProvider.getDistributions(symbols, asOf, days);
+    return this.allowMockFallback ? mockMarketDataProvider.getDistributions(symbols, asOf, days) : [];
   }
 }

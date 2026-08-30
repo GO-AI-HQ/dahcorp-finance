@@ -1,4 +1,9 @@
-import type { IntelligenceEvent, IntelligenceProviderStatus } from '../../src/intelligence/types.js';
+import type {
+  IntelligenceEvent,
+  IntelligenceProviderStatus,
+  ReferenceRegistry,
+  SecurityReference,
+} from '../../src/intelligence/types.js';
 import {
   classifyEvent,
   ENERGY_INTELLIGENCE_SYMBOLS,
@@ -10,13 +15,13 @@ import {
 } from '../../src/intelligence/taxonomy.js';
 
 const FINNHUB_BASE = 'https://finnhub.io/api/v1';
+const PROFILE_ANCHORS = ['AMD', 'CCJ', 'INSW', 'GOOGL'];
 
 interface FinnhubNewsItem {
   category?: string;
   datetime?: number;
   headline?: string;
   id?: number;
-  image?: string;
   related?: string;
   source?: string;
   summary?: string;
@@ -36,8 +41,52 @@ interface FinnhubCapitalItem {
   [key: string]: unknown;
 }
 
+interface FinnhubSymbolRow {
+  symbol?: string;
+  displaySymbol?: string;
+  description?: string;
+  type?: string;
+  mic?: string;
+  figi?: string;
+  currency?: string;
+}
+
+interface FinnhubProfile {
+  ticker?: string;
+  name?: string;
+  finnhubIndustry?: string;
+  marketCapitalization?: number;
+  weburl?: string;
+}
+
+interface FinnhubEarningsRow {
+  date?: string;
+  symbol?: string;
+  epsActual?: number | null;
+  epsEstimate?: number | null;
+  revenueActual?: number | null;
+  revenueEstimate?: number | null;
+  hour?: string | null;
+  quarter?: number | null;
+  year?: number | null;
+}
+
+interface FinnhubEarningsPayload {
+  earningsCalendar?: FinnhubEarningsRow[];
+}
+
 function apiKey(): string | null {
   return Netlify.env.get('FINNHUB_API_KEY')?.trim() || null;
+}
+
+function strategySymbols(): string[] {
+  return [...new Set([
+    ...SEMICONDUCTOR_INTELLIGENCE_SYMBOLS,
+    ...ENERGY_INTELLIGENCE_SYMBOLS,
+    ...SHIPPING_INTELLIGENCE_SYMBOLS,
+    ...TECHNOLOGY_INTELLIGENCE_SYMBOLS,
+    'NVDY', 'YMAG', 'YMAX',
+  ].map((symbol) => symbol.toUpperCase()))];
 }
 
 async function fingerprint(parts: string[]): Promise<string> {
@@ -96,14 +145,18 @@ async function normalizeNews(item: FinnhubNewsItem, sourceClass: 'market_news' |
   };
 }
 
-function dateDaysAgo(days: number): string {
+function dateDaysFromNow(days: number): string {
   const date = new Date();
-  date.setUTCDate(date.getUTCDate() - days);
+  date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
 }
 
+function dateDaysAgo(days: number): string {
+  return dateDaysFromNow(-days);
+}
+
 async function companyNews(symbol: string): Promise<IntelligenceEvent[]> {
-  const result = await getJson<FinnhubNewsItem[]>('/company-news', { symbol, from: dateDaysAgo(4), to: new Date().toISOString().slice(0, 10) });
+  const result = await getJson<FinnhubNewsItem[]>('/company-news', { symbol, from: dateDaysAgo(4), to: dateDaysFromNow(0) });
   if (!result.ok || !Array.isArray(result.data)) return [];
   const rows = await Promise.all(result.data.slice(0, 12).map((item) => normalizeNews(item, 'corporate')));
   return rows.filter((row): row is IntelligenceEvent => row !== null);
@@ -144,10 +197,109 @@ async function capitalEvents(path: string, symbol: string, label: string): Promi
   return events;
 }
 
-export async function fetchFinnhubIntelligence(): Promise<{ events: IntelligenceEvent[]; status: IntelligenceProviderStatus }> {
+async function referenceRegistry(): Promise<{ registry: ReferenceRegistry; ok: boolean; status: number }> {
+  const symbols = strategySymbols();
+  const directory = await getJson<FinnhubSymbolRow[]>('/stock/symbol', { exchange: 'US' });
+  const profiles = await Promise.all(PROFILE_ANCHORS.map(async (symbol) => ({
+    symbol,
+    result: await getJson<FinnhubProfile>('/stock/profile2', { symbol }),
+  })));
+  const profileMap = new Map(profiles.filter((row) => row.result.ok && row.result.data).map((row) => [row.symbol, row.result.data as FinnhubProfile]));
+  const directoryMap = new Map(
+    (directory.ok && Array.isArray(directory.data) ? directory.data : [])
+      .filter((row) => row.symbol)
+      .map((row) => [String(row.symbol).toUpperCase(), row]),
+  );
+  const entries: SecurityReference[] = symbols.map((symbol) => {
+    const row = directoryMap.get(symbol);
+    const profile = profileMap.get(symbol);
+    return {
+      symbol,
+      displaySymbol: row?.displaySymbol ?? null,
+      name: profile?.name ?? row?.description ?? null,
+      type: row?.type ?? null,
+      currency: row?.currency ?? null,
+      mic: row?.mic ?? null,
+      figi: row?.figi ?? null,
+      industry: profile?.finnhubIndustry ?? null,
+      marketCapitalization: typeof profile?.marketCapitalization === 'number' ? profile.marketCapitalization : null,
+      weburl: profile?.weburl ?? null,
+      source: 'finnhub',
+    };
+  });
+  return {
+    registry: {
+      asOf: new Date().toISOString(),
+      exchange: 'US',
+      symbols: entries,
+      source: 'finnhub',
+      note: 'Finnhub is the reference-data registry. Registry inclusion never expands the deterministic trading allowlist.',
+    },
+    ok: directory.ok,
+    status: directory.status,
+  };
+}
+
+async function earningsEvents(): Promise<{ events: IntelligenceEvent[]; ok: boolean; status: number }> {
+  const result = await getJson<FinnhubEarningsPayload>('/calendar/earnings', {
+    from: dateDaysAgo(1),
+    to: dateDaysFromNow(14),
+  });
+  if (!result.ok || !Array.isArray(result.data?.earningsCalendar)) return { events: [], ok: false, status: result.status };
+  const relevant = new Set(strategySymbols());
+  const rows = result.data.earningsCalendar.filter((row) => row.symbol && relevant.has(row.symbol.toUpperCase())).slice(0, 60);
+  const events = await Promise.all(rows.map(async (row): Promise<IntelligenceEvent> => {
+    const symbol = String(row.symbol).toUpperCase();
+    const date = String(row.date ?? dateDaysFromNow(0)).slice(0, 10);
+    return {
+      fingerprint: await fingerprint(['finnhub-earnings', symbol, date, String(row.quarter ?? ''), String(row.year ?? '')]),
+      occurredAt: `${date}T12:00:00.000Z`,
+      discoveredAt: new Date().toISOString(),
+      source: 'Finnhub earnings calendar',
+      sourceClass: 'corporate',
+      sourceUrl: null,
+      sourceQuality: 0.82,
+      sector: sectorForText(symbol, [symbol]),
+      eventType: 'EARNINGS_CALENDAR_EVENT',
+      headline: `${symbol} earnings calendar event`,
+      summary: `Scheduled ${date}${row.hour ? ` (${row.hour})` : ''}. EPS estimate=${row.epsEstimate ?? 'UNKNOWN'}, revenue estimate=${row.revenueEstimate ?? 'UNKNOWN'}. Actuals remain UNKNOWN until reported.`,
+      symbols: [symbol],
+      latency: 'near_real_time',
+      direction: 'unknown',
+      severity: 'medium',
+      sentimentScore: null,
+      metadata: {
+        date,
+        hour: row.hour ?? null,
+        quarter: row.quarter ?? null,
+        year: row.year ?? null,
+        epsEstimate: row.epsEstimate ?? null,
+        epsActual: row.epsActual ?? null,
+        revenueEstimate: row.revenueEstimate ?? null,
+        revenueActual: row.revenueActual ?? null,
+      },
+    };
+  }));
+  return { events, ok: true, status: result.status };
+}
+
+const EMPTY_REGISTRY: ReferenceRegistry = {
+  asOf: new Date(0).toISOString(),
+  exchange: 'US',
+  symbols: [],
+  source: 'finnhub',
+  note: 'Finnhub reference data is unavailable; no synthetic security metadata is substituted.',
+};
+
+export async function fetchFinnhubIntelligence(): Promise<{
+  events: IntelligenceEvent[];
+  referenceRegistry: ReferenceRegistry;
+  status: IntelligenceProviderStatus;
+}> {
   if (!apiKey()) {
     return {
       events: [],
+      referenceRegistry: { ...EMPTY_REGISTRY, asOf: new Date().toISOString() },
       status: { provider: 'finnhub', connected: false, status: 'not_configured', note: 'FINNHUB_API_KEY is not configured.' },
     };
   }
@@ -157,12 +309,11 @@ export async function fetchFinnhubIntelligence(): Promise<{ events: Intelligence
     ? (await Promise.all(market.data.slice(0, 30).map((item) => normalizeNews(item, 'market_news')))).filter((row): row is IntelligenceEvent => row !== null)
     : [];
 
-  // One anchor per active research lane keeps request volume disciplined while
-  // the broader taxonomy maps sector spillovers downstream.
   const [
     amdNews, ccjNews, inswNews, googlNews,
     amdCongress, ccjCongress, inswCongress, googlCongress,
     amdLobbying, ccjLobbying, inswLobbying, googlLobbying,
+    references, earnings,
   ] = await Promise.all([
     companyNews('AMD'), companyNews('CCJ'), companyNews('INSW'), companyNews('GOOGL'),
     capitalEvents('/stock/congressional-trading', 'AMD', 'Congressional disclosure'),
@@ -173,31 +324,34 @@ export async function fetchFinnhubIntelligence(): Promise<{ events: Intelligence
     capitalEvents('/stock/lobbying', 'CCJ', 'Lobbying disclosure'),
     capitalEvents('/stock/lobbying', 'INSW', 'Lobbying disclosure'),
     capitalEvents('/stock/lobbying', 'GOOGL', 'Lobbying disclosure'),
+    referenceRegistry(),
+    earningsEvents(),
   ]);
 
-  const strategySymbols = [
-    ...SEMICONDUCTOR_INTELLIGENCE_SYMBOLS,
-    ...ENERGY_INTELLIGENCE_SYMBOLS,
-    ...SHIPPING_INTELLIGENCE_SYMBOLS,
-    ...TECHNOLOGY_INTELLIGENCE_SYMBOLS,
-  ];
+  const relevant = new Set(strategySymbols());
   const events = [
     ...marketRows,
     ...amdNews, ...ccjNews, ...inswNews, ...googlNews,
     ...amdCongress, ...ccjCongress, ...inswCongress, ...googlCongress,
     ...amdLobbying, ...ccjLobbying, ...inswLobbying, ...googlLobbying,
-  ].filter((event) => event.sector !== 'cross_market' || event.symbols.some((symbol) => strategySymbols.includes(symbol as never)));
+    ...earnings.events,
+  ].filter((event) => event.sector !== 'cross_market' || event.symbols.some((symbol) => relevant.has(symbol)));
 
-  const partial = !market.ok;
+  const partial = !market.ok || !references.ok || !earnings.ok;
+  const missing: string[] = [];
+  if (!market.ok) missing.push(`news HTTP ${market.status || 'n/a'}`);
+  if (!references.ok) missing.push(`symbol registry HTTP ${references.status || 'n/a'}`);
+  if (!earnings.ok) missing.push(`earnings calendar HTTP ${earnings.status || 'n/a'}`);
   return {
     events,
+    referenceRegistry: references.registry,
     status: {
       provider: 'finnhub',
       connected: true,
       status: partial ? 'partial' : 'live',
       note: partial
-        ? `Finnhub key is configured; at least one endpoint was unavailable on the current plan (HTTP ${market.status || 'n/a'}). Optional premium feeds degrade safely.`
-        : 'Finnhub market/company news and public-disclosure probes are active across semiconductor, energy, shipping and technology research lanes. Premium endpoint availability depends on the Finnhub plan.',
+        ? `Finnhub is connected with graceful plan-aware degradation (${missing.join('; ')}). Available reference/company/event evidence remains live; unavailable fields remain UNKNOWN.`
+        : 'Finnhub is live as the US security reference registry and company-event intelligence layer, including company news, earnings calendar and supported public-disclosure feeds.',
     },
   };
 }

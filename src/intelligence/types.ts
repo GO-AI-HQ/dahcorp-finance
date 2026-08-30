@@ -84,6 +84,9 @@ export type IntelligenceEventType =
   | TechnologyEventType
   | 'CAPITAL_DISCLOSURE'
   | 'MARKET_BENCHMARK_TREND'
+  | 'MACRO_REGIME_UPDATE'
+  | 'ECONOMIC_CALENDAR_EVENT'
+  | 'EARNINGS_CALENDAR_EVENT'
   | 'MARKET_NEWS'
   | 'OTHER';
 
@@ -147,6 +150,61 @@ export interface MarketPulseTickerItem {
   summary: string;
 }
 
+export interface MacroRegimeSeries {
+  series: string;
+  label: string;
+  latest: number | null;
+  prior30d: number | null;
+  change30d: number | null;
+  asOf: string | null;
+  source: 'fred';
+}
+
+export interface MacroRegimeSnapshot {
+  asOf: string;
+  series: MacroRegimeSeries[];
+  yieldCurve10y2y: number | null;
+  vix: number | null;
+  highYieldSpread: number | null;
+  financialConditions: number | null;
+  fedFunds: number | null;
+  regime: 'risk_on' | 'balanced' | 'risk_off' | 'insufficient_data';
+  note: string;
+}
+
+export interface EconomicCalendarItem {
+  date: string;
+  event: string;
+  country: string | null;
+  actual: number | string | null;
+  consensus: number | string | null;
+  previous: number | string | null;
+  importance: string | null;
+  source: 'openbb';
+}
+
+export interface SecurityReference {
+  symbol: string;
+  displaySymbol: string | null;
+  name: string | null;
+  type: string | null;
+  currency: string | null;
+  mic: string | null;
+  figi: string | null;
+  industry: string | null;
+  marketCapitalization: number | null;
+  weburl: string | null;
+  source: 'finnhub';
+}
+
+export interface ReferenceRegistry {
+  asOf: string;
+  exchange: string;
+  symbols: SecurityReference[];
+  source: 'finnhub';
+  note: string;
+}
+
 export interface GovernmentTradingSignal {
   fingerprint: string;
   sector: Exclude<IntelligenceSector, 'cross_market'>;
@@ -195,6 +253,9 @@ export interface IntelligencePayload {
   providers: IntelligenceProviderStatus[];
   pulses: IntelligencePulse[];
   marketPulse: MarketPulseTickerItem[];
+  macroRegime: MacroRegimeSnapshot;
+  economicCalendar: EconomicCalendarItem[];
+  referenceRegistry: ReferenceRegistry;
   governmentTrading: GovernmentTradingSignal[];
   events: IntelligenceEvent[];
   capitalSignals: IntelligenceEvent[];
