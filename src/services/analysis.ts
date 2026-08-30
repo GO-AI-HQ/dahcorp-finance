@@ -97,7 +97,14 @@ export function buildIncomePayload(ctx: AnalysisContext, priorMonthlyIncome: num
 export function buildSignalsPayload(ctx: AnalysisContext) {
   const { snapshot, config, analysis, income } = ctx;
   const semis = buildSemiconductorEngine({ analysis, quotes: snapshot.quotes, priceHistory: snapshot.priceHistory, config });
-  const watchSymbols = [...new Set([...WATCHLISTS.semiconductorResearch, ...LEVERAGED_SYMBOLS, ...INCOME_UNIVERSE.slice(0, 8), ...analysis.positions.map((p) => p.symbol)])];
+  const watchSymbols = [...new Set([
+    ...WATCHLISTS.robinhoodPrimary,
+    ...WATCHLISTS.semiconductorResearch,
+    ...WATCHLISTS.shippingCyclical,
+    ...LEVERAGED_SYMBOLS,
+    ...INCOME_UNIVERSE.slice(0, 8),
+    ...analysis.positions.map((p) => p.symbol),
+  ])];
   const benchmarkBars = snapshot.priceHistory[config.trend.benchmarkSymbol] ?? [];
   const signals = watchSymbols.map((symbol) => {
     const quote = snapshot.quotes[symbol]; const bars = snapshot.priceHistory[symbol] ?? [];
