@@ -4,6 +4,7 @@ import {
   type TreasuryAgentJob,
 } from '../../src/agent/jobTokenCodec.js';
 
+export { isOpenAIResponseId } from '../../src/agent/jobTokenCodec.js';
 export type { TreasuryAgentJob } from '../../src/agent/jobTokenCodec.js';
 
 export type TreasuryJobEnv = Record<string, string | undefined>;
