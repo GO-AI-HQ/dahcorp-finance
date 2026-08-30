@@ -1,5 +1,6 @@
 import type { IntelligenceEvent, IntelligenceProviderStatus } from '../../src/intelligence/types.js';
 import { classifyEvent, sectorForText, symbolsForText } from '../../src/intelligence/taxonomy.js';
+import { SHIPPING_ANALYST_REFERENCES } from '../../src/intelligence/shippingAnalysts.js';
 
 interface FeedSource {
   name: string;
@@ -7,43 +8,6 @@ interface FeedSource {
   homepage: string;
   quality: number;
 }
-
-export interface ShippingAnalystReference {
-  name: string;
-  homepage: string;
-  social?: string;
-  automation: 'public_feed' | 'curated_reference';
-  note: string;
-}
-
-/**
- * Named analyst/research lane for the Shipping engine.
- *
- * Curated references may be used for source attribution, research prompts and
- * permitted downstream news mentions, but they are not automatically scraped
- * when the source terms prohibit commercial feed use.
- */
-export const SHIPPING_ANALYST_REFERENCES: ShippingAnalystReference[] = [
-  {
-    name: 'Vonheim / Christopher Vonheim',
-    homepage: 'https://shows.acast.com/bynn-with-christopher-vonheim',
-    automation: 'public_feed',
-    note: 'Public podcast feed is normalized as analyst commentary and requires corroboration.',
-  },
-  {
-    name: "What's Going on With Shipping / Sal Mercogliano",
-    homepage: 'https://www.youtube.com/@wgowshipping',
-    automation: 'public_feed',
-    note: 'Public podcast feed is normalized as analyst commentary and requires corroboration.',
-  },
-  {
-    name: 'J Mintzmyer',
-    homepage: 'https://seekingalpha.com/author/j-mintzmyer',
-    social: 'https://x.com/mintzmyer',
-    automation: 'curated_reference',
-    note: 'Named shipping-equities research source. Seeking Alpha author RSS is not ingested because the supplied feed limits use to personal, non-commercial purposes; permitted news mentions and manual research may still be corroborative evidence.',
-  },
-];
 
 const SOURCES: FeedSource[] = [
   {
@@ -156,7 +120,7 @@ async function fetchSource(source: FeedSource): Promise<{ events: IntelligenceEv
 export async function fetchShippingCommentary(): Promise<{ events: IntelligenceEvent[]; status: IntelligenceProviderStatus }> {
   const rows = await Promise.all(SOURCES.map(fetchSource));
   const live = rows.filter((row) => row.ok).length;
-  const curated = SHIPPING_ANALYST_REFERENCES.filter((source) => source.automation === 'curated_reference').map((source) => source.name);
+  const curated = SHIPPING_ANALYST_REFERENCES.filter((source) => source.automation === 'curated_reference').map((source) => source.shortName);
   return {
     events: rows.flatMap((row) => row.events),
     status: {
@@ -164,8 +128,8 @@ export async function fetchShippingCommentary(): Promise<{ events: IntelligenceE
       connected: live > 0,
       status: live === SOURCES.length ? 'live' : live ? 'partial' : 'unavailable',
       note: live
-        ? `${live}/${SOURCES.length} permitted public maritime commentary feeds are active. Curated analyst references: ${curated.join(', ')}. Commentary is context only and requires corroboration by market, freight, company or policy evidence.`
-        : `Public maritime commentary feeds are currently unavailable. Curated analyst references remain available for permitted/manual research: ${curated.join(', ')}; no commentary is treated as evidence until sourced through a permitted channel.`,
+        ? `${live}/${SOURCES.length} permitted public maritime commentary feeds are active. ${SHIPPING_ANALYST_REFERENCES.length} named specialists are tracked; curated-only: ${curated.join(', ')}. Commentary remains context only and requires corroboration by market, freight, company or policy evidence.`
+        : `Public maritime commentary feeds are currently unavailable. ${SHIPPING_ANALYST_REFERENCES.length} named specialists remain in the research watchlist; curated-only: ${curated.join(', ')}. No commentary is treated as evidence until sourced through a permitted channel.`,
     },
   };
 }
