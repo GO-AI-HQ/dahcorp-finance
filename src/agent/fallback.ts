@@ -23,8 +23,8 @@ import type { AgentResult, RecommendationBrief, RecommendedLeg } from './types.j
  */
 export function requiresSemanticModel(question: string): boolean {
   const hasTicker = /\b[A-Z][A-Z0-9.]{1,5}\b/.test(question);
-  const hasTransactionVerb = /\b(buy|purchase|sell|replace|swap|switch|rotate|exit|trim|liquidate|reduce|add|increase|decrease|move)\b/i.test(question);
-  const hasComparison = /\b(instead of|versus|vs\.?|replace\s+.+\s+with|move\s+.+\s+(?:to|into)|only hold)\b/i.test(question);
+  const hasTransactionVerb = /\b(buy(?:ing)?|purchas(?:e|ing)|sell(?:ing)?|replac(?:e|ing)|swap(?:ping)?|switch(?:ing)?|rotat(?:e|ing)|exit(?:ing)?|trim(?:ming)?|liquidat(?:e|ing)|reduc(?:e|ing)|add(?:ing)?|increas(?:e|ing)|decreas(?:e|ing)|mov(?:e|ing))\b/i.test(question);
+  const hasComparison = /\b(instead of|versus|vs\.?|replac(?:e|ing)\s+.+\s+with|mov(?:e|ing)\s+.+\s+(?:to|into)|only hold)\b/i.test(question);
   return hasTicker && (hasTransactionVerb || hasComparison);
 }
 
@@ -86,36 +86,25 @@ export function buildDeterministicBrief(args: {
   }
   if (!risks.length) risks.push('No high-severity portfolio drag detected at this snapshot.');
 
-  // The alternative is the next-best efficiency candidate not already funded.
   const funded = new Set(legs.map((l) => l.symbol));
   const alternativeCandidate = opportunities.find(
     (o) => !funded.has(o.symbol) && o.verdict === 'consider_adding' && !o.efficiency.stats.thinHistory,
   );
   const totalAmount = legs.reduce((a, l) => a + l.amount, 0);
-  const alternative =
-    alternativeCandidate && totalAmount > 0
-      ? {
-          summary: `Concentrate the same $${totalAmount.toFixed(2)} in ${alternativeCandidate.symbol} instead.`,
-          legs: [
-            {
-              symbol: alternativeCandidate.symbol,
-              amount: totalAmount,
-              accountId: legs[0]?.accountId ?? '',
-              reason: alternativeCandidate.verdictReason,
-            },
-          ],
-          tradeoff:
-            'Higher cash-flow efficiency in one name, at the cost of more single-position and single-exposure concentration.',
-        }
-      : null;
+  const alternative = alternativeCandidate && totalAmount > 0
+    ? {
+        summary: `Concentrate the same $${totalAmount.toFixed(2)} in ${alternativeCandidate.symbol} instead.`,
+        legs: [{ symbol: alternativeCandidate.symbol, amount: totalAmount, accountId: legs[0]?.accountId ?? '', reason: alternativeCandidate.verdictReason }],
+        tradeoff: 'Higher cash-flow efficiency in one name, at the cost of more single-position and single-exposure concentration.',
+      }
+    : null;
 
   const gap = milestone.monthlyIncome - income.forwardMonthlyIncome;
   const monthlyRate = (income.blendedDistributionRate ?? 0) / 12;
   const addedIncome = totalAmount * monthlyRate;
-  const etaImpact =
-    totalAmount > 0 && monthlyRate > 0
-      ? `Adds roughly $${addedIncome.toFixed(2)}/month of modeled income, closing about ${((addedIncome / Math.max(gap, 0.01)) * 100).toFixed(1)}% of the remaining gap to ${milestone.label}.`
-      : 'No measurable change to the milestone ETA from this decision.';
+  const etaImpact = totalAmount > 0 && monthlyRate > 0
+    ? `Adds roughly $${addedIncome.toFixed(2)}/month of modeled income, closing about ${((addedIncome / Math.max(gap, 0.01)) * 100).toFixed(1)}% of the remaining gap to ${milestone.label}.`
+    : 'No measurable change to the milestone ETA from this decision.';
 
   return {
     headline,
@@ -125,13 +114,8 @@ export function buildDeterministicBrief(args: {
     risks,
     alternative,
     etaImpact,
-    notes: [
-      ...plan.constraints,
-      'This brief was produced by the deterministic allocation policy, not by a language model.',
-    ],
-    dataCaveats: ctx.snapshot.containsMockData
-      ? ['Snapshot contains mock data. Treat this as a demonstration of the reasoning, not advice on real positions.']
-      : [],
+    notes: [...plan.constraints, 'This brief was produced by the deterministic allocation policy, not by a language model.'],
+    dataCaveats: ctx.snapshot.containsMockData ? ['Snapshot contains mock data. Treat this as a demonstration of the reasoning, not advice on real positions.'] : [],
   };
 }
 
