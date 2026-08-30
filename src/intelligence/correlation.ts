@@ -2,7 +2,12 @@ import type { GovernmentTradingSignal, IntelligenceEvent, IntelligenceSector } f
 
 function toDate(value: unknown): string | null {
   if (typeof value !== 'string' || !value.trim()) return null;
-  const time = new Date(value).getTime();
+  const text = value.trim();
+  // AInvest reports trade/filing dates without a time. Normalize those dates to
+  // noon UTC, matching the AInvest adapter, so correlation windows do not gain
+  // or lose a day simply because another source includes an intraday timestamp.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return `${text}T12:00:00.000Z`;
+  const time = new Date(text).getTime();
   return Number.isFinite(time) ? new Date(time).toISOString() : null;
 }
 
