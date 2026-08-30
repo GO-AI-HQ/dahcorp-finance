@@ -9,6 +9,7 @@ import { ProgressBar } from '../components/ProgressBar.js';
 import { DataBanner } from '../components/DataBanner.js';
 import { YmagTradeCard } from '../components/YmagTradeCard.js';
 import { NvdyTradeCard } from '../components/NvdyTradeCard.js';
+import { HouseholdLiquidityCard } from '../components/HouseholdLiquidityCard.js';
 import { EmptyState, ErrorState, LoadingCards } from '../components/States.js';
 import { SLEEVE_LABELS } from '../core/universe.js';
 import { formatMoney, formatPct, formatShares, formatSignedMoney, formatSignedPct } from '../core/format.js';
@@ -50,10 +51,10 @@ export function PortfolioV2() {
   const techPulse = intelligence.data?.pulses.find((row) => row.sector === 'technology') ?? null;
   const policyCaution = semiPulse?.label === 'Cautious' || semiPulse?.policy === 'restrictive';
   const growthDecision = policyCaution
-    ? 'HOLD GROWTH CASH — semiconductor policy evidence is restrictive'
+    ? 'Keep growth cash available — semiconductor policy risk is elevated'
     : bestGrowth
-      ? `MODEL NEXT GROWTH MOVE — ${bestGrowth.symbol} has a qualified setup`
-      : 'HOLD GROWTH CASH — no transaction is required now';
+      ? `Model the next growth move — ${bestGrowth.symbol} has a qualified setup`
+      : 'Keep growth cash available — nothing needs to be bought right now';
   const growthModelQuestion = bestGrowth
     ? `The strongest qualified Growth price setup is ${bestGrowth.symbol}. Compare buying a specific dollar amount of ${bestGrowth.symbol} with holding Robinhood Growth cash and any stronger eligible alternative. Only recommend a transaction if it improves the Growth mandate after intelligence, overlap and risk.`
     : 'Review the overall Robinhood Growth Treasury. Should I buy, sell, rebalance, or simply hold the Growth Cash Queue now? Do not manufacture a transaction if no setup materially improves the strategy.';
@@ -62,33 +63,35 @@ export function PortfolioV2() {
     <>
       <PageHead
         eyebrow="Portfolio"
-        title="Your money and action queue"
-        lede="See what you own, which cash each strategy may use, and which decisions are ready for modeling, preview or execution. Growth, Income and Maritime cash are separate mandates."
+        title="Your money and what it can do next"
+        lede="See what you own, which cash belongs to each strategy, and what is ready for a closer look. Growth, Income and Maritime cash stay separate unless you explicitly move it."
       />
 
       <DataBanner containsMockData={p.containsMockData} sourceNotes={p.sourceNotes} asOf={p.asOf} />
 
       <div className="grid grid--4 section">
-        <Card label="Growth Cash Queue" title={formatMoney(growthCash)} action={<Badge tone="intel">Robinhood Agentic</Badge>}><p className="meta">Available only to the Growth mandate. Funding never automatically buys a security.</p></Card>
-        <Card label="Income 3085 Cash Queue" title={formatMoney(incomeCash)} action={<Badge tone="ice">Schwab Income</Badge>}><p className="meta">Reserved for YMAG / qualified Income rotations. Maritime cash is excluded.</p></Card>
-        <Card label="Maritime Cash Queue" title={formatMoney(maritimeCash)} action={<Badge tone="ice">Schwab Maritime</Badge>}><p className="meta">Reserved for the Shipping accumulation/rotation strategy. It cannot fund Income unless you explicitly transfer/reassign it.</p></Card>
-        <Card label="Other broker cash" title={formatMoney(otherCash)} action={<Badge tone="neutral">Visible only</Badge>}><p className="meta">Visible for household awareness but not authorized for a DAHCorp strategy.</p></Card>
+        <Card label="Growth cash" title={formatMoney(growthCash)} action={<Badge tone="intel">Robinhood Agentic</Badge>}><p className="meta">Available to the Growth strategy. New cash does not automatically buy anything.</p></Card>
+        <Card label="Income cash" title={formatMoney(incomeCash)} action={<Badge tone="ice">Schwab Income</Badge>}><p className="meta">Set aside for YMAG and other qualified income moves. Maritime cash stays separate.</p></Card>
+        <Card label="Maritime cash" title={formatMoney(maritimeCash)} action={<Badge tone="ice">Schwab Maritime</Badge>}><p className="meta">Set aside for the Shipping strategy. It cannot fund Income unless you deliberately reassign it.</p></Card>
+        <Card label="Other broker cash" title={formatMoney(otherCash)} action={<Badge tone="neutral">Visible only</Badge>}><p className="meta">You can see it here, but DAHCorp will not treat it as strategy cash unless you authorize that account.</p></Card>
       </div>
 
-      <Card label="Growth Treasury Decision" title={growthDecision} tone={policyCaution ? 'risk' : 'default'}>
+      <div className="section"><HouseholdLiquidityCard otherBrokerCash={otherCash} /></div>
+
+      <Card label="Growth decision" title={growthDecision} tone={policyCaution ? 'risk' : 'default'}>
         <div className="grid grid--3">
-          <div className="panel"><span className="soft">Best qualified price setup</span><strong style={{ display: 'block', marginTop: 4 }}>{bestGrowth?.symbol ?? 'None'}</strong><p className="meta">{bestGrowth?.dip.declineFromReference == null ? 'No planned buy-zone setup currently qualifies.' : `${formatPct(bestGrowth.dip.declineFromReference, 1)} below its active reference with confirmed market health.`}</p></div>
-          <div className="panel"><span className="soft">Semiconductor intelligence</span><strong style={{ display: 'block', marginTop: 4 }}>{semiPulse?.label ?? 'Not enough evidence'}</strong><p className="meta">Policy {semiPulse?.policy ?? 'unknown'} · news {semiPulse?.newsPressure ?? 'unknown'}.</p></div>
-          <div className="panel"><span className="soft">Technology intelligence</span><strong style={{ display: 'block', marginTop: 4 }}>{techPulse?.label ?? 'Not enough evidence'}</strong><p className="meta">This is the overall Growth Treasury view. Ticker-specific decisions live in Growth / Modeling Lab.</p></div>
+          <div className="panel"><span className="soft">Best price setup right now</span><strong style={{ display: 'block', marginTop: 4 }}>{bestGrowth?.symbol ?? 'None'}</strong><p className="meta">{bestGrowth?.dip.declineFromReference == null ? 'No planned buy zone currently qualifies.' : `${formatPct(bestGrowth.dip.declineFromReference, 1)} below its active reference with confirmed market health.`}</p></div>
+          <div className="panel"><span className="soft">Semiconductor backdrop</span><strong style={{ display: 'block', marginTop: 4 }}>{semiPulse?.label ?? 'Not enough evidence yet'}</strong><p className="meta">Policy {semiPulse?.policy ?? 'unknown'} · news {semiPulse?.newsPressure ?? 'unknown'}.</p></div>
+          <div className="panel"><span className="soft">Technology backdrop</span><strong style={{ display: 'block', marginTop: 4 }}>{techPulse?.label ?? 'Not enough evidence yet'}</strong><p className="meta">This is the big-picture Growth view. Ticker-specific choices live in Growth and Modeling Lab.</p></div>
         </div>
         <div className="banner" style={{ marginTop: 14 }}>
-          <strong>Recommended amount comes from Modeling Lab</strong>
-          <p className="meta">DAHCorp will not turn a single dip signal into an arbitrary tranche. The Treasury Agent compares holding cash with actual BUY/SELL alternatives and returns a dollar amount only after deterministic validation.</p>
+          <strong>Modeling Lab decides whether an amount is worth moving</strong>
+          <p className="meta">A dip by itself is not enough. The strategist compares buying, selling and doing nothing, then the safety rules check the result before anything can reach a broker preview.</p>
         </div>
         <div className="row" style={{ gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
-          <Link to={`/modeling-lab?question=${encodeURIComponent(growthModelQuestion)}`} className="btn btn--sm btn--gold">Build Growth Proposed Model</Link>
+          <Link to={`/modeling-lab?question=${encodeURIComponent(growthModelQuestion)}`} className="btn btn--sm btn--gold">Model the next Growth move</Link>
           <Link to="/growth?tab=opportunities" className="btn btn--sm btn--ghost">Growth opportunities</Link>
-          <Link to="/intelligence" className="btn btn--sm btn--ghost">Market Intelligence</Link>
+          <Link to="/intelligence" className="btn btn--sm btn--ghost">Market intelligence</Link>
         </div>
       </Card>
 
@@ -96,16 +99,16 @@ export function PortfolioV2() {
       <div className="section"><NvdyTradeCard /></div>
 
       <div className="grid grid--2 section">
-        <Card label="Investment strategy" title="How portfolio value is currently being used" hint="Percentages below are each strategy's market value divided by total portfolio value, including brokerage cash.">
+        <Card label="Investment strategy" title="How your portfolio is being used" hint="The percentages below show how much of the portfolio sits in each strategy, including brokerage cash.">
           <div className="stack stack--tight">
             {p.sleeves.map((sleeve) => (
-              <ProgressBar key={sleeve.sleeve} label={`${strategyLabel(sleeve.sleeve)} — ${formatMoney(sleeve.marketValue, 0)}`} value={sleeve.weight} valueLabel={`${formatPct(sleeve.weight, 1)} of total portfolio`} tone={sleeve.overCeiling ? 'risk' : sleeve.sleeve === 'income_engine' ? 'gold' : 'ice'} caption={sleeve.ceiling != null ? `${sleeve.positions} positions · policy maximum ${formatPct(sleeve.ceiling, 0)}` : `${sleeve.positions} positions · ${sleeve.symbols.join(', ')}`} />
+              <ProgressBar key={sleeve.sleeve} label={`${strategyLabel(sleeve.sleeve)} — ${formatMoney(sleeve.marketValue, 0)}`} value={sleeve.weight} valueLabel={`${formatPct(sleeve.weight, 1)} of total portfolio`} tone={sleeve.overCeiling ? 'risk' : sleeve.sleeve === 'income_engine' ? 'gold' : 'ice'} caption={sleeve.ceiling != null ? `${sleeve.positions} positions · your maximum is ${formatPct(sleeve.ceiling, 0)}` : `${sleeve.positions} positions · ${sleeve.symbols.join(', ')}`} />
             ))}
           </div>
         </Card>
 
-        <Card label="What your money is exposed to" title="Overlapping bets">
-          <p className="meta">Different tickers can still depend on the same company, sector or economic driver. This view helps DAHCorp avoid accidentally making the same bet several times.</p>
+        <Card label="What your money is exposed to" title="Where your bets overlap">
+          <p className="meta">Different tickers can still depend on the same company, sector or economic driver. This helps you avoid accidentally making the same bet several times.</p>
           <div className="table-wrap" style={{ marginTop: 10 }}>
             <table className="data"><thead><tr><th>Exposure</th><th>Value</th><th>Share of total</th><th>Symbols</th></tr></thead><tbody>
               {p.exposures.map((exposure) => <tr key={exposure.exposure}><th>{exposure.exposure}</th><td className="num">{formatMoney(exposure.marketValue, 0)}</td><td className="num">{formatPct(exposure.weight, 1)}</td><td>{exposure.symbols.join(', ')}</td></tr>)}
@@ -121,7 +124,7 @@ export function PortfolioV2() {
             <Card
               label={`${account.account.broker} · ${account.account.type}`}
               title={account.account.name}
-              action={<div className="row" style={{ gap: 8, flexWrap: 'wrap' }}><Badge tone={account.account.allocationEligible ? 'positive' : 'neutral'} glyph={account.account.allocationEligible ? '✓' : '—'}>{account.account.allocationEligible ? 'Strategy cash authorized' : 'Visible only'}</Badge><Badge tone={account.account.tradeEligible ? 'positive' : 'neutral'} glyph={account.account.tradeEligible ? '✓' : '✕'}>{account.account.tradeEligible ? 'Broker trading available' : 'Trading off'}</Badge></div>}
+              action={<div className="row" style={{ gap: 8, flexWrap: 'wrap' }}><Badge tone={account.account.allocationEligible ? 'positive' : 'neutral'} glyph={account.account.allocationEligible ? '✓' : '—'}>{account.account.allocationEligible ? 'Strategy cash available' : 'Visible only'}</Badge><Badge tone={account.account.tradeEligible ? 'positive' : 'neutral'} glyph={account.account.tradeEligible ? '✓' : '✕'}>{account.account.tradeEligible ? 'Broker trading available' : 'Trading off'}</Badge></div>}
               hint={account.account.role}
             >
               <div className="row" style={{ gap: 'var(--space-5)', marginBottom: 'var(--space-4)', flexWrap: 'wrap' }}>
@@ -130,7 +133,7 @@ export function PortfolioV2() {
                 <span><span className="soft">Gain / loss </span><span className="num">{basisUnknown ? 'Cost basis unavailable' : `${formatSignedMoney(account.unrealizedPL)} ${formatSignedPct(account.unrealizedPLPct)}`}</span></span>
               </div>
 
-              {positions.length === 0 ? <EmptyState title="No positions in this account">Cash-only account. Nothing is assumed to be held that the broker has not reported.</EmptyState> : (
+              {positions.length === 0 ? <EmptyState title="No positions in this account">This account currently holds cash only. DAHCorp does not assume you own anything the broker has not reported.</EmptyState> : (
                 <div className="table-wrap">
                   <table className="data"><thead><tr><th>Symbol</th><th>Strategy</th><th>Shares</th><th>Price</th><th>Value</th><th>Cost / share</th><th>Gain / loss</th><th>Share of portfolio</th><th>Today</th></tr></thead><tbody>
                     {positions.map((position) => {
