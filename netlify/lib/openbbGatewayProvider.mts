@@ -1,3 +1,4 @@
+import { createPrivateKey, randomBytes, sign as signPayload, type KeyObject } from 'node:crypto';
 import type { DistributionEvent, DistributionFrequency, PriceBar, Quote } from '../../src/core/types.js';
 import type { MarketDataProvider } from '../../src/market/provider.js';
 import { MarketDataError } from '../../src/market/provider.js';
@@ -31,6 +32,21 @@ interface OpenBBDividendRow {
   symbol?: string | null;
   ex_dividend_date?: string;
   amount?: number | null;
+}
+
+type RuntimeEnv = Record<string, string | undefined>;
+
+function envValue(key: string, env?: RuntimeEnv): string | undefined {
+  const explicit = env?.[key];
+  if (explicit != null) return explicit;
+  try {
+    const netlify = (globalThis as typeof globalThis & {
+      Netlify?: { env?: { get?: (name: string) => string | undefined } };
+    }).Netlify;
+    return netlify?.env?.get?.(key);
+  } catch {
+    return undefined;
+  }
 }
 
 function finite(value: unknown): number | null {
@@ -70,42 +86,69 @@ function inferredFrequency(dates: string[]): DistributionFrequency {
 /**
  * Server-only provider for the DAHCorp Cloud Run gateway.
  *
- * The gateway secret never reaches the browser. The gateway itself uses its
- * attached Google service account to call the private OpenBB Cloud Run service.
+ * Netlify holds only an Ed25519 private signing key. Google contains only the
+ * matching public verification key. The gateway's attached Google service
+ * account then invokes the private OpenBB Cloud Run service.
  */
 export class OpenBBGatewayMarketDataProvider implements MarketDataProvider {
   readonly id = 'openbb-cloud-run-gateway';
   readonly isMock = false;
   readonly sourceNotes = [
-    'OpenBB market evidence is retrieved through the DAHCorp Google Cloud gateway using the yfinance provider.',
+    'OpenBB market evidence is retrieved through the DAHCorp signed Google Cloud gateway using the yfinance provider.',
     'OpenBB/yfinance dividend history supplies ex-dividend date and cash amount but not verified payment date or tax character; payment date is represented by ex-date for model timing and ROC remains UNKNOWN.',
     'OpenBB/yfinance data is treated as delayed market evidence, not exchange-native execution pricing.',
   ];
 
   private readonly baseUrl: string;
-  private readonly secret: string;
+  private readonly signingKeyValue: string;
   private readonly provider: string;
+  private signingKey: KeyObject | null = null;
 
-  constructor(env: NodeJS.ProcessEnv = process.env, private readonly fetchImpl: typeof fetch = fetch) {
-    this.baseUrl = (env.OPENBB_GATEWAY_URL?.trim() || '').replace(/\/$/, '');
-    this.secret = env.OPENBB_GATEWAY_SECRET?.trim() || '';
-    this.provider = env.OPENBB_MARKET_PROVIDER?.trim().toLowerCase() || 'yfinance';
+  constructor(env?: RuntimeEnv, private readonly fetchImpl: typeof fetch = fetch) {
+    this.baseUrl = (envValue('OPENBB_GATEWAY_URL', env)?.trim() || '').replace(/\/$/, '');
+    this.signingKeyValue = envValue('OPENBB_GATEWAY_SIGNING_KEY', env)?.trim() || '';
+    this.provider = envValue('OPENBB_MARKET_PROVIDER', env)?.trim().toLowerCase() || 'yfinance';
   }
 
   isConfigured(): boolean {
-    return Boolean(this.baseUrl && this.secret);
+    return Boolean(this.baseUrl && this.signingKeyValue);
+  }
+
+  private privateKey(): KeyObject {
+    if (this.signingKey) return this.signingKey;
+    try {
+      this.signingKey = createPrivateKey({
+        key: Buffer.from(this.signingKeyValue, 'base64'),
+        format: 'der',
+        type: 'pkcs8',
+      });
+      return this.signingKey;
+    } catch (cause) {
+      throw new MarketDataError('OpenBB gateway signing key is invalid.', this.id, cause);
+    }
+  }
+
+  private signedHeaders(path: string, query: string): Record<string, string> {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const nonce = randomBytes(18).toString('base64url');
+    const canonical = ['GET', path, query, timestamp, nonce].join('\n');
+    const signature = signPayload(null, Buffer.from(canonical, 'utf8'), this.privateKey()).toString('base64url');
+    return {
+      Accept: 'application/json',
+      'X-DAHCORP-TIMESTAMP': timestamp,
+      'X-DAHCORP-NONCE': nonce,
+      'X-DAHCORP-SIGNATURE': signature,
+    };
   }
 
   private async get<T>(path: string, params: URLSearchParams): Promise<OpenBBEnvelope<T>> {
     if (!this.isConfigured()) throw new MarketDataError('OpenBB gateway is not configured.', this.id);
     params.set('provider', this.provider);
+    const query = params.toString();
     let response: Response;
     try {
-      response = await this.fetchImpl(`${this.baseUrl}${path}?${params.toString()}`, {
-        headers: {
-          Accept: 'application/json',
-          'X-DAHCORP-GATEWAY-SECRET': this.secret,
-        },
+      response = await this.fetchImpl(`${this.baseUrl}${path}?${query}`, {
+        headers: this.signedHeaders(path, query),
       });
     } catch (cause) {
       throw new MarketDataError('OpenBB gateway could not be reached.', this.id, cause);
