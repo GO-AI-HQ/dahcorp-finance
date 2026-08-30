@@ -27,6 +27,12 @@ interface SafeOpenAIError {
   code: string | null;
 }
 
+interface OpenAIIdentityProbe {
+  status: number | null;
+  authenticated: boolean | null;
+  error: SafeOpenAIError;
+}
+
 const DEFAULT_OPENAI_MODEL = 'gpt-5.6-terra';
 const DEFAULT_OPENAI_PROMPT_ID = 'pmpt_6a9286ff3dbc8190b8c15ef4da2e001b0302504ca0de38ab';
 const DEFAULT_OPENAI_PROMPT_VERSION = '1';
@@ -89,9 +95,22 @@ function openAIPromptVersion(env?: NodeJS.ProcessEnv): string {
   return envValue('OPENAI_PROMPT_VERSION', env)?.trim() || DEFAULT_OPENAI_PROMPT_VERSION;
 }
 
+function openAIBaseUrl(env?: NodeJS.ProcessEnv): string {
+  return (envValue('OPENAI_BASE_URL', env)?.trim() || 'https://api.openai.com').replace(/\/$/, '');
+}
+
+function openAIEndpoint(path: string, env?: NodeJS.ProcessEnv): string {
+  const base = openAIBaseUrl(env);
+  const root = base.endsWith('/v1') ? base : `${base}/v1`;
+  return `${root}/${path.replace(/^\//, '')}`;
+}
+
 function openAIResponsesEndpoint(env?: NodeJS.ProcessEnv): string {
-  const base = (envValue('OPENAI_BASE_URL', env)?.trim() || 'https://api.openai.com').replace(/\/$/, '');
-  return base.endsWith('/v1') ? `${base}/responses` : `${base}/v1/responses`;
+  return openAIEndpoint('responses', env);
+}
+
+function openAIMeEndpoint(env?: NodeJS.ProcessEnv): string {
+  return openAIEndpoint('me', env);
 }
 
 function promptValue(value: unknown): string {
@@ -139,11 +158,50 @@ function openAIErrorDiagnostic(error: SafeOpenAIError): string | null {
   return parts.length ? parts.join(', ') : null;
 }
 
-function safeOpenAIFailure(status: number, providerError: SafeOpenAIError): string {
+async function probeOpenAIIdentity(apiKey: string): Promise<OpenAIIdentityProbe> {
+  try {
+    const response = await fetch(openAIMeEndpoint(), {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: 'application/json',
+      },
+    });
+    if (response.ok) {
+      // Do not read or expose identity details. A 2xx response alone proves that
+      // OpenAI accepted this exact credential at the authentication boundary.
+      return { status: response.status, authenticated: true, error: { type: null, code: null } };
+    }
+    return {
+      status: response.status,
+      authenticated: response.status === 401 ? false : null,
+      error: await readSafeOpenAIError(response),
+    };
+  } catch {
+    return { status: null, authenticated: null, error: { type: null, code: null } };
+  }
+}
+
+function identityProbeDiagnostic(probe: OpenAIIdentityProbe): string {
+  const providerDiagnostic = openAIErrorDiagnostic(probe.error);
+  if (probe.authenticated === true) {
+    return 'Credential probe: the same key authenticated successfully at OpenAI /v1/me, so the 401 is specific to the Responses request or its project/resource context.';
+  }
+  if (probe.authenticated === false) {
+    return `Credential probe: the same key also received HTTP 401 from OpenAI /v1/me${providerDiagnostic ? ` (${providerDiagnostic})` : ''}. The credential is being rejected at the authentication boundary before the Treasury prompt or model request is evaluated.`;
+  }
+  if (probe.status != null) {
+    return `Credential probe: OpenAI /v1/me returned HTTP ${probe.status}${providerDiagnostic ? ` (${providerDiagnostic})` : ''}, so authentication could not be conclusively isolated.`;
+  }
+  return 'Credential probe: OpenAI /v1/me could not be completed, so authentication could not be independently verified.';
+}
+
+function safeOpenAIFailure(status: number, providerError: SafeOpenAIError, identityProbe?: OpenAIIdentityProbe): string {
   const diagnostic = openAIErrorDiagnostic(providerError);
   const suffix = diagnostic ? ` OpenAI error: ${diagnostic}.` : '';
   if (status === 401) {
-    return `OpenAI rejected the configured API credential (HTTP 401).${suffix} This is an authentication-layer failure; the deterministic strategy brief is shown instead.`;
+    const probe = identityProbe ? ` ${identityProbeDiagnostic(identityProbe)}` : '';
+    return `OpenAI rejected the Treasury Responses request (HTTP 401).${suffix}${probe} The deterministic strategy brief is shown instead.`;
   }
   if (status === 403) return `OpenAI authenticated the credential but denied access to the requested resource or model (HTTP 403).${suffix}`;
   if (status === 404) return `OpenAI authenticated the request but could not find the configured model or stored prompt (HTTP 404).${suffix}`;
@@ -210,14 +268,15 @@ async function requestOpenAIRecommendation(request: AgentRequest): Promise<Agent
     if (!response.ok) {
       const providerError = await readSafeOpenAIError(response);
       const diagnostic = openAIErrorDiagnostic(providerError);
+      const identityProbe = response.status === 401 ? await probeOpenAIIdentity(apiKey) : undefined;
       console.error(
-        `[dahcorp] OpenAI Responses request failed with status ${response.status}${diagnostic ? ` (${diagnostic})` : ''}.`,
+        `[dahcorp] OpenAI Responses request failed with status ${response.status}${diagnostic ? ` (${diagnostic})` : ''}; identity probe status ${identityProbe?.status ?? 'not-run'}.`,
       );
       return {
         brief: deterministicBrief,
         source: 'deterministic',
         model,
-        fallbackReason: safeOpenAIFailure(response.status, providerError),
+        fallbackReason: safeOpenAIFailure(response.status, providerError, identityProbe),
         usage: null,
       };
     }
