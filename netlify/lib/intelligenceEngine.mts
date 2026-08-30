@@ -131,7 +131,7 @@ function macroFromEvents(events: IntelligenceEvent[]): MacroRegimeSnapshot {
   const raw = event?.metadata;
   if (!event || !raw) return EMPTY_MACRO();
   const seriesRaw = Array.isArray(raw.series) ? raw.series : [];
-  const series: MacroRegimeSeries[] = seriesRaw.map((row) => {
+  const series: MacroRegimeSeries[] = seriesRaw.map((row): MacroRegimeSeries => {
     const item = row as Partial<MacroRegimeSeries>;
     return {
       series: String(item.series ?? ''),
