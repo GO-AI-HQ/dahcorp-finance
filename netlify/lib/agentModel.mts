@@ -115,6 +115,24 @@ function promptValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
+export function openAIRuntimeTreasuryInput(request: AgentRequest): string {
+  const { question, digest, capital, config, shadowEvidence, eventIntelligence, claudeResearchBrief } = request;
+  return [
+    '══════════════════════════════════════',
+    'RUNTIME TREASURY CONTEXT',
+    '══════════════════════════════════════',
+    `AS OF\n${digest.asOf}`,
+    `USER QUESTION\n${question}`,
+    `AVAILABLE CAPITAL\n${capital.toFixed(2)}`,
+    `PORTFOLIO DIGEST\n${promptValue(digest)}`,
+    `STRATEGY POLICY\n${promptValue(config)}`,
+    `SHADOW MODE EVIDENCE\n${promptValue(shadowEvidence)}`,
+    `EVENT INTELLIGENCE\n${promptValue(eventIntelligence)}`,
+    `CLAUDE RESEARCH BRIEF\n${promptValue(claudeResearchBrief)}`,
+    'Treat this runtime context as the authoritative instance-specific input for the current analysis. Missing fields remain UNKNOWN, never zero.',
+  ].join('\n\n');
+}
+
 async function readSafeOpenAIError(response: Response): Promise<SafeOpenAIError> {
   try {
     return safeOpenAIErrorFromPayload(await response.json());
@@ -133,8 +151,6 @@ async function probeOpenAIIdentity(apiKey: string): Promise<OpenAIIdentityProbe>
       },
     });
     if (response.ok) {
-      // Do not read or expose identity details. A 2xx response alone proves that
-      // OpenAI accepted this exact credential at the authentication boundary.
       return { status: response.status, authenticated: true, error: { type: null, code: null, param: null } };
     }
     return {
@@ -176,7 +192,7 @@ function safeOpenAIFailure(status: number, providerError: SafeOpenAIError, ident
 }
 
 async function requestOpenAIRecommendation(request: AgentRequest): Promise<AgentResult> {
-  const { question, digest, capital, config, deterministicBrief, shadowEvidence, eventIntelligence, claudeResearchBrief } = request;
+  const { deterministicBrief } = request;
   const apiKey = openAIKey();
 
   if (!apiKey) {
@@ -206,17 +222,8 @@ async function requestOpenAIRecommendation(request: AgentRequest): Promise<Agent
         prompt: {
           id: promptId,
           version: promptVersion,
-          variables: {
-            as_of: digest.asOf,
-            user_question: question,
-            available_capital: capital.toFixed(2),
-            portfolio_digest: promptValue(digest),
-            strategy_policy: promptValue(config),
-            shadow_evidence: promptValue(shadowEvidence),
-            event_intelligence: promptValue(eventIntelligence),
-            claude_research_brief: promptValue(claudeResearchBrief),
-          },
         },
+        input: openAIRuntimeTreasuryInput(request),
         tools: [{
           type: 'function',
           name: RECOMMENDATION_TOOL.name,
