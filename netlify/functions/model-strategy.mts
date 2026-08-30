@@ -3,7 +3,7 @@ import { requireSession } from '../lib/session.mts';
 import { buildServerContext } from '../lib/context.mts';
 import { buildPlan, buildSignalsPayload, buildSimulation } from '../../src/services/analysis.js';
 import { buildAgentDigest } from '../../src/agent/digest.js';
-import { buildDeterministicBrief } from '../../src/agent/fallback.js';
+import { buildDeterministicBrief, buildSemanticModelUnavailableBrief, requiresSemanticModel } from '../../src/agent/fallback.js';
 import { requestAgentRecommendation } from '../lib/agentModel.mts';
 import { requestResearchBrief } from '../lib/claude.mts';
 import { validateOrders } from '../../src/risk/engine.js';
@@ -61,7 +61,11 @@ export default withErrorHandling('model-strategy', async (req: Request) => {
 
   const plan = buildPlan(ctx, capital);
   const digest = buildAgentDigest({ ctx, plan, opportunities: signals.opportunities, semis: signals.semis, drag: signals.drag, capital });
-  const fallback = event ? holdBrief(question, capital) : buildDeterministicBrief({ ctx, plan, opportunities: signals.opportunities, semis: signals.semis, drag: signals.drag, question });
+  const fallback = event
+    ? holdBrief(question, capital)
+    : requiresSemanticModel(question)
+      ? buildSemanticModelUnavailableBrief(question, capital)
+      : buildDeterministicBrief({ ctx, plan, opportunities: signals.opportunities, semis: signals.semis, drag: signals.drag, question });
   const research = event
     ? await requestResearchBrief({ question, digest, eventIntelligence: event })
     : { available: false, model: null, text: 'No material source event was attached to this model.', usage: null };
@@ -126,7 +130,13 @@ export default withErrorHandling('model-strategy', async (req: Request) => {
     if (account.broker === 'robinhood') {
       manualSteps.push(`${validated.order.side.toUpperCase()} ${validated.order.symbol}: DAHCorp can route this to the Robinhood guarded preview when human-confirmed execution is armed.`);
     } else if (account.broker === 'schwab' && validated.order.side === 'buy' && validated.order.symbol === 'YMAG') {
-      manualSteps.push(`BUY YMAG: DAHCorp can route this to Schwab 3085's guarded whole-share preview when sufficient cash is available.`);
+      const price = validated.estimatedPrice ?? 0;
+      const wholeShares = price > 0 ? Math.floor(validated.allowedNotional / price) : 0;
+      if (wholeShares >= 1) {
+        manualSteps.push(`BUY YMAG: DAHCorp can route ${wholeShares} whole share${wholeShares === 1 ? '' : 's'} to Schwab 3085's guarded preview.`);
+      } else {
+        manualSteps.push(`BUY YMAG: the modeled amount is below one whole Schwab share at the current price. Preserve the cash or add funding before a live Schwab preview is available.`);
+      }
     } else {
       manualSteps.push(`${validated.order.side.toUpperCase()} ${validated.order.symbol}: the strategy can be adopted and staged in DAHCorp, but this broker/symbol leg still requires a supported live execution adapter or manual broker action.`);
     }
