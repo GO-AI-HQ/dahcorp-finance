@@ -40,6 +40,7 @@ export function StrategyLab() {
   const [busy, setBusy] = useState(false);
   const [scopeNonce, setScopeNonce] = useState(0);
   const planningBasisRef = useRef<number | null>(null);
+  const requestSeqRef = useRef(0);
 
   useEffect(() => {
     let alive = true;
@@ -60,21 +61,28 @@ export function StrategyLab() {
       .catch((err: unknown) => {
         if (alive) setError(err instanceof ApiError ? err : new ApiError('Strategy Lab could not build the current plan.', 0, 'UNKNOWN'));
       });
-    return () => { alive = false; };
+    return () => { alive = false; requestSeqRef.current += 1; };
   }, []);
 
   useEffect(() => {
     if (!inputs) return;
+    const requestId = ++requestSeqRef.current;
     setBusy(true);
     const handle = window.setTimeout(() => {
       api.simulate({ ...inputs, basisOverrideRate: planningBasisRef.current ?? undefined })
         .then((next) => {
+          if (requestId !== requestSeqRef.current) return;
           if (planningBasisRef.current == null && next.modeledRate > 0) planningBasisRef.current = next.modeledRate;
           setResult(next);
           setError(null);
         })
-        .catch((err: unknown) => setError(err instanceof ApiError ? err : new ApiError('Strategy Lab could not recalculate.', 0, 'UNKNOWN')))
-        .finally(() => setBusy(false));
+        .catch((err: unknown) => {
+          if (requestId !== requestSeqRef.current) return;
+          setError(err instanceof ApiError ? err : new ApiError('Strategy Lab could not recalculate.', 0, 'UNKNOWN'));
+        })
+        .finally(() => {
+          if (requestId === requestSeqRef.current) setBusy(false);
+        });
     }, 260);
     return () => window.clearTimeout(handle);
   }, [inputs, scopeNonce]);
