@@ -15,34 +15,30 @@ function runtimeEnv(key: string): string | undefined {
   }
 }
 
-function repairProviderStatus(payload: IntelligencePayload): IntelligencePayload {
-  const openbbConfigured = Boolean(runtimeEnv('OPENBB_GATEWAY_URL') && runtimeEnv('OPENBB_GATEWAY_SIGNING_KEY'));
-  const finnhubConfigured = Boolean(runtimeEnv('FINNHUB_API_KEY'));
-  const ainvestConfigured = Boolean(runtimeEnv('AINVEST_API_KEY') || runtimeEnv('AINVEST_KEY'));
+/**
+ * Some Netlify runtimes expose environment variables through process.env while
+ * the lower-level intelligence module may only see Netlify.env. When a source
+ * is configured but has not yet been tested in this request, show that honestly
+ * as "waiting for a live check" rather than calling it live or not configured.
+ */
+function repairConfigurationLabels(payload: IntelligencePayload): IntelligencePayload {
+  const configured = {
+    openbb: Boolean(runtimeEnv('OPENBB_GATEWAY_URL') && runtimeEnv('OPENBB_GATEWAY_SIGNING_KEY')),
+    finnhub: Boolean(runtimeEnv('FINNHUB_API_KEY')),
+    ainvest: Boolean(runtimeEnv('AINVEST_API_KEY') || runtimeEnv('AINVEST_KEY')),
+  };
 
   return {
     ...payload,
     providers: payload.providers.map((provider) => {
-      if (provider.provider === 'openbb' && openbbConfigured) {
-        return {
-          ...provider,
-          connected: true,
-          status: 'live' as const,
-          note: 'OpenBB is connected through the signed Google Cloud gateway. Individual datasets can still be waiting on their next refresh.',
-        };
-      }
-      if (provider.provider === 'finnhub' && finnhubConfigured) {
-        return {
-          ...provider,
-          connected: true,
-          status: 'live' as const,
-          note: 'Finnhub is connected for ticker reference data and company/event research. Some fields update on their own provider schedule.',
-        };
-      }
-      if (provider.provider === 'ainvest' && ainvestConfigured) {
-        return { ...provider, connected: true, status: 'live' as const };
-      }
-      return provider;
+      const present = configured[provider.provider as keyof typeof configured];
+      if (!present || provider.status !== 'not_configured') return provider;
+      return {
+        ...provider,
+        connected: true,
+        status: 'partial' as const,
+        note: `${provider.provider.replace(/_/g, ' ')} is configured. Run a refresh to confirm that live data is actually returning.`,
+      };
     }),
   };
 }
@@ -50,9 +46,8 @@ function repairProviderStatus(payload: IntelligencePayload): IntelligencePayload
 /**
  * GET /.netlify/functions/intelligence
  *
- * Returns normalized market/policy/capital evidence. `?refresh=1` performs a
- * provider refresh before reading the event ledger. No LLM and no broker write
- * are invoked from this endpoint.
+ * Returns the market information used by the app. `?refresh=1` asks the live
+ * providers for a fresh read. This endpoint never moves money or calls an LLM.
  */
 export default withErrorHandling('intelligence', async (req: Request) => {
   if (req.method !== 'GET') return methodNotAllowed(['GET']);
@@ -64,16 +59,18 @@ export default withErrorHandling('intelligence', async (req: Request) => {
   const limitRaw = Number(url.searchParams.get('limit') ?? 100);
   const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(Math.trunc(limitRaw), 1), 200) : 100;
 
-  let payload = repairProviderStatus(await buildMarketIntelligencePayload({ refresh, limit }));
+  let payload = await buildMarketIntelligencePayload({ refresh, limit });
 
-  // A healthy new gateway can come online before the first scheduled market
-  // pulse has been saved. Bootstrap that evidence once instead of leaving the
-  // market-weather strip empty for up to an hour. Missing data still stays
-  // UNKNOWN; no mock or fixture values are introduced.
+  // A newly connected provider can be healthy before its first scheduled data
+  // pull. If every market lane is still empty, make one real refresh now rather
+  // than asking the user to wait for the hourly job. If that refresh fails, keep
+  // the provider's real failure state — never overwrite it with a green badge.
   const openbbConfigured = Boolean(runtimeEnv('OPENBB_GATEWAY_URL') && runtimeEnv('OPENBB_GATEWAY_SIGNING_KEY'));
   const marketPulseMissing = payload.marketPulse.length > 0 && payload.marketPulse.every((item) => item.dataRole === 'unavailable');
   if (!refresh && openbbConfigured && marketPulseMissing) {
-    payload = repairProviderStatus(await buildMarketIntelligencePayload({ refresh: true, limit }));
+    payload = await buildMarketIntelligencePayload({ refresh: true, limit });
+  } else if (!refresh) {
+    payload = repairConfigurationLabels(payload);
   }
 
   return json(payload);
