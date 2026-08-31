@@ -2,13 +2,14 @@ import { json, methodNotAllowed, readJsonBody, withErrorHandling } from '../lib/
 import { requireSession } from '../lib/session.mts';
 import { buildServerContext } from '../lib/context.mts';
 import { buildSimulation, type SimulatorRequest } from '../../src/services/analysis.js';
+import { resolveStrategyLabBasis } from '../lib/strategyLabBasis.mts';
 
 /**
  * POST /.netlify/functions/simulate
  *
- * Goal simulator. Runs the month-by-month projection under conservative, base
- * and aggressive assumptions and solves for the contribution required to hit
- * the target by 12 / 18 / 24 / 36 months. Every figure is solved, not tabulated.
+ * Goal simulator. The planning basis is deliberately steadier than execution
+ * pricing: slider changes compare the same verified distribution-rate evidence
+ * rather than rebuilding the chart around a transient provider miss.
  */
 export default withErrorHandling('simulate', async (req: Request) => {
   if (req.method !== 'POST') return methodNotAllowed(['POST']);
@@ -17,5 +18,19 @@ export default withErrorHandling('simulate', async (req: Request) => {
 
   const body = (await readJsonBody<SimulatorRequest>(req)) ?? {};
   const ctx = await buildServerContext();
-  return json(buildSimulation(ctx, body));
+  const basis = await resolveStrategyLabBasis(ctx);
+  const requestedBasis = typeof body.basisOverrideRate === 'number' && Number.isFinite(body.basisOverrideRate) && body.basisOverrideRate > 0
+    ? body.basisOverrideRate
+    : basis.rate;
+  const simulation = buildSimulation(ctx, {
+    ...body,
+    basisOverrideRate: requestedBasis ?? undefined,
+  });
+
+  return json({
+    ...simulation,
+    incomeEvidenceStatus: basis.status,
+    incomeEvidenceAsOf: basis.asOf,
+    incomeEvidenceNote: basis.note,
+  });
 });
