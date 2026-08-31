@@ -82,6 +82,63 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
+export interface UpcomingIncomeEvent {
+  symbol: string;
+  exDate: string;
+  recordDate: string | null;
+  paymentDate: string | null;
+  declarationDate: string | null;
+  amountPerShare: number | null;
+  frequency: string | null;
+  source: 'fmp_calendar' | 'fmp_company_snapshot';
+}
+
+export interface IncomeCandidate {
+  symbol: string;
+  name: string;
+  category: 'option_income' | 'dividend_compounder' | 'high_yield_equity' | 'cyclical_income';
+  price: number | null;
+  marketCap: number | null;
+  sector: string | null;
+  industry: string | null;
+  volume: number | null;
+  trailing12mCashPerShare: number | null;
+  trailingYieldPct: number | null;
+  thirteenWeekAnnualizedYieldPct: number | null;
+  payoutCount12m: number;
+  payoutVariability: 'low' | 'moderate' | 'high' | 'unknown';
+  payoutCoefficientOfVariation: number | null;
+  observedAnnualGrowthStreakYears: number;
+  officialAristocratStatus: 'not_verified';
+  dataAsOf: string;
+  notes: string[];
+}
+
+export interface StrategyMutationProposal {
+  action: 'ADD' | 'REDUCE' | 'REPLACE' | 'REWEIGHT' | 'HOLD';
+  symbol: string | null;
+  compareWith: string | null;
+  headline: string;
+  why: string;
+  missingEvidence: string[];
+  requiresModeling: true;
+  requiresPolicyApproval: boolean;
+}
+
+export interface IncomeIntelligenceSnapshot {
+  version: 'income-v1';
+  asOf: string | null;
+  upcoming: UpcomingIncomeEvent[];
+  candidates: IncomeCandidate[];
+  sourceStatus: {
+    calendar: 'live' | 'fallback' | 'unavailable';
+    screener: 'live' | 'fallback' | 'unavailable';
+    distributions: 'live' | 'partial' | 'unavailable';
+  };
+  callsUsed: number;
+  note: string;
+}
+
 export type PortfolioResponse = ReturnType<typeof buildPortfolioPayload> & {
   brokers: BrokerStatus[];
   configPersisted: boolean;
@@ -89,9 +146,18 @@ export type PortfolioResponse = ReturnType<typeof buildPortfolioPayload> & {
   priorSnapshotAsOf: string | null;
 };
 
-export type IncomeResponse = ReturnType<typeof buildIncomePayload>;
+export type IncomeResponse = ReturnType<typeof buildIncomePayload> & {
+  incomeIntelligence: {
+    snapshot: IncomeIntelligenceSnapshot | null;
+    proposals: StrategyMutationProposal[];
+  };
+};
 export type SignalsResponse = ReturnType<typeof buildSignalsPayload>;
-export type SimulationResponse = ReturnType<typeof buildSimulation>;
+export type SimulationResponse = ReturnType<typeof buildSimulation> & {
+  incomeEvidenceStatus?: 'current' | 'recent_verified' | 'unavailable';
+  incomeEvidenceAsOf?: string | null;
+  incomeEvidenceNote?: string;
+};
 
 export interface SessionResponse {
   authenticated: boolean;
@@ -171,7 +237,7 @@ async function analyzeWithPolling(question: string, capital?: number): Promise<A
   }
 
   throw new ApiError(
-    'The Treasury strategist is still processing. Please try again in a moment.',
+    'The Strategist is still processing. Please try again in a moment.',
     408,
     'ANALYSIS_POLL_TIMEOUT',
   );
@@ -365,6 +431,8 @@ export const api = {
 
   portfolio: () => request<PortfolioResponse>('/portfolio'),
   income: () => request<IncomeResponse>('/income'),
+  incomeIntelligence: () => request<IncomeIntelligenceSnapshot>('/income-intelligence'),
+  refreshIncomeIntelligence: () => request<IncomeIntelligenceSnapshot>('/income-intelligence', { method: 'POST' }),
   signals: () => request<SignalsResponse>('/signals'),
   simulate: (body: SimulatorRequest) =>
     request<SimulationResponse>('/simulate', { method: 'POST', body: JSON.stringify(body) }),

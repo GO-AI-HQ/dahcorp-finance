@@ -9,17 +9,19 @@ import { recordAudit, saveRecommendation } from './store.mts';
 import type { ProposedOrder } from '../../src/risk/types.js';
 import type { AgentRequest } from './agentModel.mts';
 import { buildMarketIntelligencePayload } from './intelligenceEngine.mts';
-import { loadAdvancedEvidenceFabric } from './intelligenceV3.mts';
+import { loadStableAdvancedEvidenceFabric } from './intelligenceV3Stable.mts';
 import { compactAdvancedEvidence } from './intelligenceContext.mts';
+import { buildStrategyMutationProposals, loadIncomeIntelligence } from './incomeIntelligence.mts';
 
 export async function prepareAnalysis(question: string, requestedCapital?: number) {
   // Read the latest stored research in parallel with the portfolio. Provider
   // refreshes happen separately so a user question does not wait on dozens of
   // outside data calls before the strategist can begin.
-  const [ctx, intelligence, advanced] = await Promise.all([
+  const [ctx, intelligence, advanced, incomeResearch] = await Promise.all([
     buildServerContext(),
     buildMarketIntelligencePayload({ refresh: false, limit: 100 }),
-    loadAdvancedEvidenceFabric(),
+    loadStableAdvancedEvidenceFabric(),
+    loadIncomeIntelligence(),
   ]);
   const signals = buildSignalsPayload(ctx);
   const policyCapital = investableCapital(ctx);
@@ -43,8 +45,8 @@ export async function prepareAnalysis(question: string, requestedCapital?: numbe
     question,
   });
 
-  // Keep the model packet compact. The full event ledger and raw V3 source
-  // snapshots stay stored server-side; OpenAI receives the decision-relevant
+  // Keep the model packet compact. The full event ledger and raw source
+  // snapshots stay stored server-side; OpenAI/Claude receive decision-relevant
   // summaries, current coverage and provenance rather than a giant raw dump.
   const eventIntelligence = {
     asOf: intelligence.asOf,
@@ -59,6 +61,14 @@ export async function prepareAnalysis(question: string, requestedCapital?: numbe
     policyEvents: intelligence.policyEvents.slice(0, 20),
     events: intelligence.events.slice(0, 60),
     deeperResearch: compactAdvancedEvidence(advanced),
+    incomeResearch: incomeResearch ? {
+      asOf: incomeResearch.asOf,
+      sourceStatus: incomeResearch.sourceStatus,
+      upcoming: incomeResearch.upcoming.slice(0, 24),
+      candidates: incomeResearch.candidates.slice(0, 16),
+      strategyChangeIdeas: buildStrategyMutationProposals(ctx, incomeResearch),
+      rule: 'These are research candidates and portfolio-change proposals, not an expanded execution allowlist. A new symbol must still pass Modeling Lab, account fit, deterministic policy and investor approval.',
+    } : { status: 'not_available' },
     note: intelligence.note,
   };
 

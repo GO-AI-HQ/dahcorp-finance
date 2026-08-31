@@ -6,7 +6,10 @@ import {
   type RateApiDepositBenchmarkPayload,
   type SavingsRateBenchmark,
 } from '../../src/core/rateApiContract.js';
-import { persistIntelligenceEvents, recentIntelligenceEvents } from './intelligenceStore.mts';
+import { latestIntelligenceEventByPurpose, persistIntelligenceEvents } from './intelligenceStore.mts';
+
+const RATEAPI_PURPOSE = 'household_liquidity_savings_benchmark';
+const VERIFIED_MAX_AGE_DAYS = 7;
 
 function envValue(key: string): string | undefined {
   try {
@@ -54,13 +57,13 @@ export async function fetchSavingsRateBenchmark(fetchImpl: typeof fetch = fetch)
 }
 
 function fromEvent(event: IntelligenceEvent): SavingsRateBenchmark | null {
-  if (event.metadata?.purpose !== 'household_liquidity_savings_benchmark') return null;
+  if (event.metadata?.purpose !== RATEAPI_PURPOSE) return null;
   const raw = event.metadata;
   const asOf = typeof raw.asOf === 'string' ? raw.asOf : event.occurredAt.slice(0, 10);
   const ageDays = Math.max(0, (Date.now() - Date.parse(`${asOf}T00:00:00Z`)) / 86_400_000);
   return {
     source: 'rateapi',
-    status: ageDays <= 2 ? 'verified' : 'stale',
+    status: ageDays <= VERIFIED_MAX_AGE_DAYS ? 'verified' : 'stale',
     asOf,
     bestPublishedApy: numberOrNull(raw.bestPublishedApy),
     bestPublishedInstitution: typeof raw.bestPublishedInstitution === 'string' ? raw.bestPublishedInstitution : null,
@@ -68,15 +71,14 @@ function fromEvent(event: IntelligenceEvent): SavingsRateBenchmark | null {
     minApy: numberOrNull(raw.minApy),
     maxApy: numberOrNull(raw.maxApy),
     institutionCount: numberOrNull(raw.institutionCount),
-    note: ageDays <= 2
-      ? 'Stored RateAPI savings benchmark is current.'
-      : 'Stored RateAPI savings benchmark is older than two days. Treat it as stale until the next successful refresh.',
+    note: ageDays <= VERIFIED_MAX_AGE_DAYS
+      ? 'Using the most recent verified RateAPI savings benchmark.'
+      : 'The stored savings benchmark is more than a week old. Keep the last verified value visible, but treat it as stale until the next successful refresh.',
   };
 }
 
 export async function storedSavingsRateBenchmark(): Promise<SavingsRateBenchmark | null> {
-  const events = await recentIntelligenceEvents(250);
-  const event = events.find((row) => row.metadata?.purpose === 'household_liquidity_savings_benchmark');
+  const event = await latestIntelligenceEventByPurpose(RATEAPI_PURPOSE);
   return event ? fromEvent(event) : null;
 }
 
@@ -106,7 +108,7 @@ export async function refreshSavingsRateBenchmark(): Promise<SavingsRateBenchmar
     severity: 'info',
     sentimentScore: null,
     metadata: {
-      purpose: 'household_liquidity_savings_benchmark',
+      purpose: RATEAPI_PURPOSE,
       asOf: benchmark.asOf,
       bestPublishedApy: benchmark.bestPublishedApy,
       bestPublishedInstitution: benchmark.bestPublishedInstitution,
@@ -114,6 +116,7 @@ export async function refreshSavingsRateBenchmark(): Promise<SavingsRateBenchmar
       minApy: benchmark.minApy,
       maxApy: benchmark.maxApy,
       institutionCount: benchmark.institutionCount,
+      cachePolicy: 'Low-frequency supporting benchmark. Refresh twice weekly; keep the last verified value between refreshes.',
       caveat: 'Do not treat the highest published APY as personally available until eligibility, balance tier, geography, membership rules, insurance and access are confirmed.',
     },
   };

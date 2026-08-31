@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api, ApiError, type SimulationResponse } from '../services/api.js';
 import { PageHead } from '../components/PageHead.js';
@@ -39,12 +39,14 @@ export function StrategyLab() {
   const [error, setError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState(false);
   const [scopeNonce, setScopeNonce] = useState(0);
+  const planningBasisRef = useRef<number | null>(null);
 
   useEffect(() => {
     let alive = true;
     api.simulate({})
       .then((initial) => {
         if (!alive) return;
+        if (initial.modeledRate > 0) planningBasisRef.current = initial.modeledRate;
         setResult(initial);
         setInputs({
           monthlyContribution: Math.round(initial.inputs.monthlyContribution),
@@ -65,8 +67,9 @@ export function StrategyLab() {
     if (!inputs) return;
     setBusy(true);
     const handle = window.setTimeout(() => {
-      api.simulate(inputs)
+      api.simulate({ ...inputs, basisOverrideRate: planningBasisRef.current ?? undefined })
         .then((next) => {
+          if (planningBasisRef.current == null && next.modeledRate > 0) planningBasisRef.current = next.modeledRate;
           setResult(next);
           setError(null);
         })
@@ -99,7 +102,7 @@ export function StrategyLab() {
       <PageHead
         eyebrow="Strategy Lab"
         title="Change the assumptions — not the holdings"
-        lede="Use Strategy Lab to test how much you add, how much income you reinvest, one-time deposits and how long a goal may take. Use Modeling Lab when the question becomes what to buy, sell, rotate or leave alone."
+        lede="Use Strategy Lab to test how much you add, how much income you reinvest, one-time deposits and how long a goal may take. The income-rate basis stays fixed while you move the sliders so you are comparing your choices against the same starting evidence. Reload the page to pick up a newer verified basis."
         action={busy ? <Badge tone="ice" glyph="◌">Recalculating</Badge> : <Badge tone="neutral">Planning only</Badge>}
       />
 
@@ -116,7 +119,7 @@ export function StrategyLab() {
 
       <div className="grid grid--2 section">
         <Card label="This lab answers" title="What happens if I change the plan?">
-          <p className="meta">Contribution amount, reinvestment rate, one-time funding, target income and time horizon are planning choices. The lines below show how those choices could change the path once verified income data is available.</p>
+          <p className="meta">Contribution amount, reinvestment rate, one-time funding, target income and time horizon are planning choices. The lines below keep the same verified income basis while you compare those choices.</p>
         </Card>
         <Card label="Need a buy or sell decision?" title="Take it to Modeling Lab">
           <p className="meta">Modeling Lab reads the actual cash queues, holdings and market evidence, then compares specific securities with the option of doing nothing.</p>
@@ -127,13 +130,13 @@ export function StrategyLab() {
       <Card label="What the graph means" title="Three ways the same planning assumptions could develop" tight>
         <div className="grid grid--3">
           <div className="panel"><strong>Conservative outcome</strong><p className="meta">Uses a more cautious version of the verified income rate.</p></div>
-          <div className="panel"><strong>Current modeled path</strong><p className="meta">Uses the current verified income history and the choices you set below.</p></div>
+          <div className="panel"><strong>Current modeled path</strong><p className="meta">Uses the verified income history that was available when this Strategy Lab session opened.</p></div>
           <div className="panel"><strong>Higher-rate illustration</strong><p className="meta">Shows the upper modeled case. It is not a forecast or promise.</p></div>
         </div>
       </Card>
 
       <Card label="What this plan includes" title="Which capital this plan is measuring" tight>
-        <ScopeSelector scope={result.scope} options={result.scopeOptions} onChanged={() => setScopeNonce((n) => n + 1)} />
+        <ScopeSelector scope={result.scope} options={result.scopeOptions} onChanged={() => { planningBasisRef.current = null; setScopeNonce((n) => n + 1); }} />
       </Card>
 
       <div className="grid grid--wide-left section">

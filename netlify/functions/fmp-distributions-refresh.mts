@@ -3,12 +3,10 @@ import { INCOME_UNIVERSE } from '../../src/core/universe.js';
 import { getFmpDistributions } from '../lib/fmpDistributionProvider.mts';
 
 /**
- * Warm the verified FMP dividend cache twice per day.
- *
- * Ten income symbols x two scheduled refreshes is about 20 calls/day before any
- * occasional newly-held symbol lookup, leaving substantial room inside the
- * 250-call/day personal plan. Dividend declarations are not an intraday quote
- * feed, so higher frequency would add cost without improving decisions.
+ * Warm the verified FMP dividend cache once per day. Dividend declarations are
+ * low-frequency data; a 24-hour cache plus the OpenBB fallback is enough for
+ * personal strategy modeling and leaves substantial room inside the 250-call
+ * daily plan for discovery and newly-held symbols.
  */
 export default async () => {
   const asOf = new Date().toISOString().slice(0, 10);
@@ -17,5 +15,5 @@ export default async () => {
 };
 
 export const config: Config = {
-  schedule: '41 6,18 * * *',
+  schedule: '41 6 * * *',
 };

@@ -5,6 +5,28 @@ function dbAvailable(): boolean {
   try { return Boolean(getDatabase()); } catch { return false; }
 }
 
+function eventFromRow(row: Record<string, unknown>): IntelligenceEvent {
+  return {
+    fingerprint: String(row.fingerprint),
+    occurredAt: new Date(String(row.occurred_at)).toISOString(),
+    discoveredAt: new Date(String(row.discovered_at)).toISOString(),
+    source: String(row.source),
+    sourceClass: String(row.source_class) as IntelligenceEvent['sourceClass'],
+    sourceUrl: row.source_url == null ? null : String(row.source_url),
+    sourceQuality: Number(row.source_quality ?? 0),
+    sector: String(row.sector) as IntelligenceEvent['sector'],
+    eventType: String(row.event_type) as IntelligenceEvent['eventType'],
+    headline: String(row.headline),
+    summary: String(row.summary ?? ''),
+    symbols: Array.isArray(row.symbols) ? row.symbols.map(String) : [],
+    latency: String(row.latency_class) as IntelligenceEvent['latency'],
+    direction: String(row.direction) as IntelligenceEvent['direction'],
+    severity: String(row.severity) as IntelligenceEvent['severity'],
+    sentimentScore: row.sentiment_score == null ? null : Number(row.sentiment_score),
+    metadata: row.metadata && typeof row.metadata === 'object' ? (row.metadata as Record<string, unknown>) : {},
+  };
+}
+
 export async function persistIntelligenceEvents(events: IntelligenceEvent[]): Promise<number> {
   if (!events.length || !dbAvailable()) return 0;
   const db = getDatabase();
@@ -53,28 +75,40 @@ export async function recentIntelligenceEvents(limit = 80): Promise<Intelligence
       ORDER BY occurred_at DESC
       LIMIT ${Math.min(Math.max(limit, 1), 500)}
     `;
-    return rows.map((row) => ({
-      fingerprint: String(row.fingerprint),
-      occurredAt: new Date(String(row.occurred_at)).toISOString(),
-      discoveredAt: new Date(String(row.discovered_at)).toISOString(),
-      source: String(row.source),
-      sourceClass: String(row.source_class) as IntelligenceEvent['sourceClass'],
-      sourceUrl: row.source_url == null ? null : String(row.source_url),
-      sourceQuality: Number(row.source_quality ?? 0),
-      sector: String(row.sector) as IntelligenceEvent['sector'],
-      eventType: String(row.event_type) as IntelligenceEvent['eventType'],
-      headline: String(row.headline),
-      summary: String(row.summary ?? ''),
-      symbols: Array.isArray(row.symbols) ? row.symbols.map(String) : [],
-      latency: String(row.latency_class) as IntelligenceEvent['latency'],
-      direction: String(row.direction) as IntelligenceEvent['direction'],
-      severity: String(row.severity) as IntelligenceEvent['severity'],
-      sentimentScore: row.sentiment_score == null ? null : Number(row.sentiment_score),
-      metadata: row.metadata && typeof row.metadata === 'object' ? (row.metadata as Record<string, unknown>) : {},
-    }));
+    return rows.map((row) => eventFromRow(row as Record<string, unknown>));
   } catch {
     return [];
   }
+}
+
+/**
+ * Read durable cache-style intelligence records without relying on their rank
+ * among the most recent market events. High-volume hourly intelligence can push
+ * a perfectly valid dividend/rate/model snapshot out of the generic 500-event
+ * window; purpose-scoped reads prevent that from making the UI flap between
+ * verified and unavailable states.
+ */
+export async function intelligenceEventsByPurpose(purpose: string, limit = 100): Promise<IntelligenceEvent[]> {
+  if (!dbAvailable()) return [];
+  const db = getDatabase();
+  try {
+    const rows = await db.sql`
+      SELECT fingerprint, occurred_at, discovered_at, source, source_class,
+             source_url, source_quality, sector, event_type, headline, summary,
+             symbols, latency_class, direction, severity, sentiment_score, metadata
+      FROM market_intelligence_events
+      WHERE metadata->>'purpose' = ${purpose}
+      ORDER BY updated_at DESC, discovered_at DESC
+      LIMIT ${Math.min(Math.max(limit, 1), 250)}
+    `;
+    return rows.map((row) => eventFromRow(row as Record<string, unknown>));
+  } catch {
+    return [];
+  }
+}
+
+export async function latestIntelligenceEventByPurpose(purpose: string): Promise<IntelligenceEvent | null> {
+  return (await intelligenceEventsByPurpose(purpose, 1))[0] ?? null;
 }
 
 export interface IntelligenceOutcome {
