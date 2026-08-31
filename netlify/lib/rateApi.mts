@@ -1,48 +1,21 @@
 import type { IntelligenceEvent } from '../../src/intelligence/types.js';
+import {
+  normalizeRateApiDepositBenchmark,
+  RATEAPI_SAVINGS_BENCHMARK_REQUEST,
+  unavailableSavingsRateBenchmark,
+  type RateApiDepositBenchmarkPayload,
+  type SavingsRateBenchmark,
+} from '../../src/core/rateApiContract.js';
 import { persistIntelligenceEvents, recentIntelligenceEvents } from './intelligenceStore.mts';
 
-type RuntimeEnv = Record<string, string | undefined>;
-
-function envValue(key: string, env: RuntimeEnv = process.env): string | undefined {
-  if (env[key] != null) return env[key];
+function envValue(key: string): string | undefined {
   try {
-    const netlify = (globalThis as typeof globalThis & {
-      Netlify?: { env?: { get?: (name: string) => string | undefined } };
-    }).Netlify;
-    return netlify?.env?.get?.(key);
+    const value = Netlify.env.get(key);
+    if (value != null) return value;
   } catch {
-    return undefined;
+    // Local/server tests may not expose the Netlify global.
   }
-}
-
-interface RateApiDepositBenchmarkPayload {
-  product_category?: string;
-  as_of?: string;
-  best?: {
-    lender?: string | null;
-    institution?: string | null;
-    apy?: number | null;
-  } | null;
-  market?: {
-    min_apy?: number | null;
-    median_apy?: number | null;
-    max_apy?: number | null;
-    institution_count?: number | null;
-    rate_count?: number | null;
-  } | null;
-}
-
-export interface SavingsRateBenchmark {
-  source: 'rateapi';
-  status: 'verified' | 'stale' | 'unavailable' | 'not_configured';
-  asOf: string | null;
-  bestPublishedApy: number | null;
-  bestPublishedInstitution: string | null;
-  medianApy: number | null;
-  minApy: number | null;
-  maxApy: number | null;
-  institutionCount: number | null;
-  note: string;
+  return undefined;
 }
 
 function numberOrNull(value: unknown): number | null {
@@ -54,45 +27,9 @@ async function fingerprint(parts: string[]): Promise<string> {
   return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-function normalize(payload: RateApiDepositBenchmarkPayload): SavingsRateBenchmark {
-  const asOf = typeof payload.as_of === 'string' && /^\d{4}-\d{2}-\d{2}/.test(payload.as_of)
-    ? payload.as_of.slice(0, 10)
-    : null;
-  const bestPublishedApy = numberOrNull(payload.best?.apy);
-  const bestPublishedInstitution = typeof payload.best?.lender === 'string'
-    ? payload.best.lender
-    : typeof payload.best?.institution === 'string'
-      ? payload.best.institution
-      : null;
-  const market = payload.market ?? {};
-  return {
-    source: 'rateapi',
-    status: asOf ? 'verified' : 'unavailable',
-    asOf,
-    bestPublishedApy,
-    bestPublishedInstitution,
-    medianApy: numberOrNull(market.median_apy),
-    minApy: numberOrNull(market.min_apy),
-    maxApy: numberOrNull(market.max_apy),
-    institutionCount: numberOrNull(market.institution_count),
-    note: asOf
-      ? 'Verified savings-rate benchmark from RateAPI. A published top APY is not automatically available to you; eligibility, balance tiers, geography, membership rules and transfer timing still matter.'
-      : 'RateAPI returned no dated savings benchmark. Exact retail savings rates remain unknown.',
-  };
-}
-
-function unavailable(status: SavingsRateBenchmark['status'], note: string): SavingsRateBenchmark {
-  return {
-    source: 'rateapi', status, asOf: null,
-    bestPublishedApy: null, bestPublishedInstitution: null,
-    medianApy: null, minApy: null, maxApy: null, institutionCount: null,
-    note,
-  };
-}
-
 export async function fetchSavingsRateBenchmark(fetchImpl: typeof fetch = fetch): Promise<SavingsRateBenchmark> {
   const key = envValue('RATEAPI_API_KEY')?.trim();
-  if (!key) return unavailable('not_configured', 'Live savings-rate data is not configured.');
+  if (!key) return unavailableSavingsRateBenchmark('not_configured', 'Live savings-rate data is not configured.');
 
   try {
     const response = await fetchImpl('https://api.rateapi.dev/v1/deposit-rates', {
@@ -102,17 +39,17 @@ export async function fetchSavingsRateBenchmark(fetchImpl: typeof fetch = fetch)
         'Content-Type': 'application/json',
         'X-API-Key': key,
       },
-      body: JSON.stringify({ product_category: 'savings', mode: 'benchmark' }),
+      body: JSON.stringify(RATEAPI_SAVINGS_BENCHMARK_REQUEST),
     });
     if (!response.ok) {
       const note = response.status === 429
         ? 'RateAPI has reached its current request limit. The last verified savings benchmark will be used if one is stored.'
         : `RateAPI returned HTTP ${response.status}. Exact retail savings rates are temporarily unavailable.`;
-      return unavailable('unavailable', note);
+      return unavailableSavingsRateBenchmark('unavailable', note);
     }
-    return normalize(await response.json() as RateApiDepositBenchmarkPayload);
+    return normalizeRateApiDepositBenchmark(await response.json() as RateApiDepositBenchmarkPayload);
   } catch {
-    return unavailable('unavailable', 'RateAPI could not be reached. Exact retail savings rates are temporarily unavailable.');
+    return unavailableSavingsRateBenchmark('unavailable', 'RateAPI could not be reached. Exact retail savings rates are temporarily unavailable.');
   }
 }
 
@@ -183,3 +120,5 @@ export async function refreshSavingsRateBenchmark(): Promise<SavingsRateBenchmar
   await persistIntelligenceEvents([event]);
   return benchmark;
 }
+
+export type { SavingsRateBenchmark } from '../../src/core/rateApiContract.js';
