@@ -1,7 +1,5 @@
-import {
-  refreshStableAdvancedEvidenceFabric,
-  type AdvancedEvidenceFabric,
-} from './intelligenceV3Stable.mts';
+import { refreshStableAdvancedEvidenceFabric } from './intelligenceV3Stable.mts';
+import type { AdvancedEvidenceFabric } from './intelligenceV3.mts';
 import { refreshCashYieldBenchmark } from './cashYieldBenchmark.mts';
 import {
   refreshFinnhubExpandedEarnings,
