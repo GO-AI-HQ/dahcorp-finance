@@ -43,7 +43,7 @@ function explanationFor(error: unknown, label: string): { state: CheckState; det
     return {
       state: 'warning',
       httpStatus: error.status,
-      detail: `${label} returned ${error.status ? `HTTP ${error.status}` : 'a connection error'}. Authentication may be working, but this data lane is not usable yet.`,
+      detail: `${label} returned ${error.status ? `HTTP ${error.status}` : 'a connection error'}. Authentication may be working, but this data route is not usable yet.`,
     };
   }
   return { state: 'warning', httpStatus: null, detail: `${label} could not be verified right now.` };
@@ -54,7 +54,7 @@ async function signedProbe(
   label: string,
   path: string,
   params: URLSearchParams,
-  options: { requireResults?: boolean } = {},
+  options: { requireResults?: boolean; routeOnly?: boolean } = {},
 ) {
   try {
     const payload = await client.get<Record<string, unknown>>(path, params);
@@ -67,11 +67,16 @@ async function signedProbe(
         detail: `${label} reached OpenBB successfully, but this probe returned no usable rows. The route is connected; the remaining issue is provider/data coverage.`,
       };
     }
+    const baseDetail = results == null
+      ? `${label} is responding through the signed Google gateway.`
+      : `${label} is responding through the signed Google gateway (${results} result${results === 1 ? '' : 's'} in this probe).`;
     return {
       label,
       state: 'working' as const,
       httpStatus: 200,
-      detail: results == null ? `${label} is responding through the signed Google gateway.` : `${label} is responding through the signed Google gateway (${results} result${results === 1 ? '' : 's'} in this probe).`,
+      detail: options.routeOnly
+        ? `${baseDetail} This proves the route works; the deeper-research lane is only counted as live after the full V3 refresh stores usable evidence.`
+        : baseDetail,
     };
   } catch (error) {
     return { label, ...explanationFor(error, label) };
@@ -125,7 +130,7 @@ export default withErrorHandling('intelligence-diagnostics', async (req: Request
       signedProbe(client, 'Macro and FRED data', '/v2/fred/series', new URLSearchParams({ series: 'DGS10', start_date: recentStart, end_date: today })),
       signedProbe(client, 'OpenBB YMAG distribution fallback', '/v1/dividends', new URLSearchParams({ symbol: 'YMAG', start_date: incomeStart, end_date: today, provider: 'yfinance' }), { requireResults: true }),
       signedProbe(client, 'OpenBB NVDY distribution fallback', '/v1/dividends', new URLSearchParams({ symbol: 'NVDY', start_date: incomeStart, end_date: today, provider: 'yfinance' }), { requireResults: true }),
-      signedProbe(client, 'V3 options evidence', '/v3/options/chains', new URLSearchParams({ symbol: 'AMD' }), { requireResults: true }),
+      signedProbe(client, 'Options route check', '/v3/options/chains', new URLSearchParams({ symbol: 'AMD' }), { requireResults: true, routeOnly: true }),
     ]));
   }
 
@@ -177,8 +182,8 @@ export default withErrorHandling('intelligence-diagnostics', async (req: Request
     },
     checks,
     nextStep: blocked?.detail ?? warning?.detail ?? (overall === 'working'
-      ? 'The connection path is working. Refresh Market to populate the latest market and deeper-research data.'
+      ? 'The connection path is working. The separate deeper-research coverage card shows which V3 lanes have actually stored usable evidence.'
       : 'Finish the missing configuration, then run this check again.'),
-    note: 'This diagnostic reports only connection and data availability. It never returns API keys, signing material or broker credentials.',
+    note: 'Connection checks answer whether a route can be reached. V3 coverage answers whether a complete research lane has usable stored evidence. Finnhub can be working while only the earnings lane is live. This diagnostic never returns API keys, signing material or broker credentials.',
   });
 });

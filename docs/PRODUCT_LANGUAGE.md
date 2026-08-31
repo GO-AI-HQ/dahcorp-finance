@@ -79,6 +79,26 @@ A useful recommendation should answer, in this order:
 
 Use short headings and normal sentences. Avoid ceremonial phrases such as “capital deployment framework,” “agentic orchestration,” “deterministic enforcement,” or “alpha-generating opportunity” when a simpler phrase communicates the same thing.
 
+## Data-state language
+
+Connection health and usable research are different facts. The product must say which one it means.
+
+- **Route working** means the app successfully reached that API/data route.
+- **Research lane populated** means the full research process stored usable evidence for that lane.
+- A provider may be connected while only one of several research lanes is populated.
+
+Do not label a successful route probe as though the entire research lane is live.
+
+When a market or income feed briefly misses:
+
+- do not remove a configured card from the page;
+- do not turn a previously verified planning calculation into `$0`;
+- keep the most recent verified planning evidence within its allowed freshness window;
+- label retained evidence as older/stale;
+- never use retained planning evidence as fresh execution pricing.
+
+For held income positions, the product should explain the evidence hierarchy plainly: the broker is authoritative for shares owned and actual cash received when transaction history is available; FMP supplies preferred declared distribution history; OpenBB is the fallback/redundant distribution source; DAHCorp performs the self-funding math.
+
 ## Review requirement
 
 Any new user-facing feature should be reviewed against this standard before merge. If a sentence sounds like it belongs in an architecture document, trading desk memo or AI research paper, rewrite it for the product UI and move the technical version into details if it still has value.

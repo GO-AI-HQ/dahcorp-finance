@@ -26,6 +26,7 @@ import { SchwabHybridMarketDataProvider } from './schwabMarketProvider.mts';
 import { OpenBBGatewayMarketDataProvider, SchwabOpenBBMarketDataProvider } from './openbbGatewayProvider.mts';
 import { resolveOpenBBSigningKeyValue } from './openbbGatewayClient.mts';
 import { FmpPreferredMarketDataProvider } from './fmpDistributionProvider.mts';
+import { StableDistributionMarketDataProvider } from './stableDistributionEvidence.mts';
 import type { SchwabAdapter } from '../../src/brokers/schwab/adapter.js';
 
 export function todayISO(now = new Date()): string {
@@ -59,6 +60,7 @@ function fallbackFromSource(source: PositionSource, broker: 'robinhood' | 'schwa
   return {
     accounts: source.accounts.filter((account) => account.broker === broker),
     holdings: source.holdings.filter((holding) => ids.has(holding.accountId)),
+    incomeEvents: source.incomeEvents?.filter((event) => ids.has(event.accountId)) ?? undefined,
     asOf: new Date().toISOString(),
   };
 }
@@ -84,6 +86,7 @@ async function convergeLiveBrokerState(source: PositionSource, adapters: BrokerA
   let holdings = source.origin === 'seed'
     ? source.holdings.filter((holding) => accounts.some((account) => account.id === holding.accountId))
     : [...source.holdings];
+  let incomeEvents = source.origin === 'seed' ? [] : [...(source.incomeEvents ?? [])];
   const notes = [...source.notes];
   const liveBrokers = new Set<BrokerId>();
 
@@ -102,6 +105,7 @@ async function convergeLiveBrokerState(source: PositionSource, adapters: BrokerA
       }
 
       const oldIds = new Set(accounts.filter((account) => account.broker === adapter.id).map((account) => account.id));
+      const newIds = new Set(data.accounts.map((account) => account.id));
       accounts = accounts.filter((account) => account.broker !== adapter.id);
       holdings = holdings.filter((holding) => !oldIds.has(holding.accountId));
       accounts.push(...data.accounts);
@@ -119,6 +123,16 @@ async function convergeLiveBrokerState(source: PositionSource, adapters: BrokerA
           verification: 'CONFIRMED' as const,
         };
       }));
+
+      // Existing adapters may not expose transaction history yet. When an
+      // adapter does supply brokerage-observed income events, replace only that
+      // broker's prior realized-income rows and preserve all other brokers.
+      if (data.incomeEvents) {
+        incomeEvents = incomeEvents.filter((event) => !oldIds.has(event.accountId));
+        incomeEvents.push(...data.incomeEvents.filter((event) => newIds.has(event.accountId)));
+        notes.push(`${adapter.label} realized income events are sourced from the connected brokerage when provided by the adapter.`);
+      }
+
       liveBrokers.add(adapter.id);
       notes.push(`${adapter.label} accounts, cash and positions are sourced live from the connected brokerage.`);
     } catch (error) {
@@ -142,9 +156,7 @@ async function convergeLiveBrokerState(source: PositionSource, adapters: BrokerA
   const contributions = source.origin === 'seed' || strictProduction
     ? source.contributions.filter((contribution) => accountIds.has(contribution.accountId) && source.origin !== 'seed')
     : source.contributions.filter((contribution) => accountIds.has(contribution.accountId));
-  const incomeEvents = source.origin === 'seed'
-    ? []
-    : source.incomeEvents?.filter((event) => accountIds.has(event.accountId)) ?? [];
+  incomeEvents = incomeEvents.filter((event) => accountIds.has(event.accountId));
 
   return {
     origin: 'broker',
@@ -283,7 +295,8 @@ export async function buildServerContext(options: { asOf?: string } = {}): Promi
     ? { ...mandated, notes: [...mandated.notes, 'External household liquidity has not been confirmed; reserve status is shown as not entered rather than $0 underfunded.'] }
     : mandated;
 
-  const provider = selectMarketProvider(adapters, config);
+  const selectedProvider = selectMarketProvider(adapters, config);
+  const provider = new StableDistributionMarketDataProvider(selectedProvider, source.incomeEvents ?? []);
   const snapshot = await buildPortfolioSnapshot({ asOf, provider, source });
   const analysisContext = buildAnalysisContext(snapshot, config);
 

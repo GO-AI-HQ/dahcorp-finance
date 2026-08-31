@@ -40,6 +40,7 @@ export function StrategyLab() {
   const [busy, setBusy] = useState(false);
   const [scopeNonce, setScopeNonce] = useState(0);
   const planningBasisRef = useRef<number | null>(null);
+  const requestSeqRef = useRef(0);
 
   useEffect(() => {
     let alive = true;
@@ -60,21 +61,28 @@ export function StrategyLab() {
       .catch((err: unknown) => {
         if (alive) setError(err instanceof ApiError ? err : new ApiError('Strategy Lab could not build the current plan.', 0, 'UNKNOWN'));
       });
-    return () => { alive = false; };
+    return () => { alive = false; requestSeqRef.current += 1; };
   }, []);
 
   useEffect(() => {
     if (!inputs) return;
+    const requestId = ++requestSeqRef.current;
     setBusy(true);
     const handle = window.setTimeout(() => {
       api.simulate({ ...inputs, basisOverrideRate: planningBasisRef.current ?? undefined })
         .then((next) => {
+          if (requestId !== requestSeqRef.current) return;
           if (planningBasisRef.current == null && next.modeledRate > 0) planningBasisRef.current = next.modeledRate;
           setResult(next);
           setError(null);
         })
-        .catch((err: unknown) => setError(err instanceof ApiError ? err : new ApiError('Strategy Lab could not recalculate.', 0, 'UNKNOWN')))
-        .finally(() => setBusy(false));
+        .catch((err: unknown) => {
+          if (requestId !== requestSeqRef.current) return;
+          setError(err instanceof ApiError ? err : new ApiError('Strategy Lab could not recalculate.', 0, 'UNKNOWN'));
+        })
+        .finally(() => {
+          if (requestId === requestSeqRef.current) setBusy(false);
+        });
     }, 260);
     return () => window.clearTimeout(handle);
   }, [inputs, scopeNonce]);
@@ -142,13 +150,13 @@ export function StrategyLab() {
       <div className="grid grid--wide-left section">
         <Card label="Goal path" title="Projected monthly investment income">
           {incomeEvidenceAvailable ? (
-            <ProjectionChart series={series} target={result.target} />
+            <ProjectionChart series={series} target={inputs.targetMonthlyIncome} />
           ) : (
             <div className="panel" style={{ minHeight: 220, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
               <div><strong>Waiting for verified income history</strong><p className="meta">The chart will appear when the app can calculate a real distribution rate instead of assuming one.</p></div>
             </div>
           )}
-          <p className="meta" style={{ marginTop: 10 }}>{incomeEvidenceAvailable ? 'Each line uses the same contribution and reinvestment choices below; only the modeled income-rate assumptions differ.' : 'Your contribution choices are still saved and editable while income data is unavailable.'}</p>
+          <p className="meta" style={{ marginTop: 10 }}>{incomeEvidenceAvailable ? 'The target line follows the goal slider immediately. The projection curves update only from the newest completed calculation, so an older request cannot overwrite a newer choice.' : 'Your contribution choices are still saved and editable while income data is unavailable.'}</p>
         </Card>
 
         <Card label="Your choices" title="Change the plan">

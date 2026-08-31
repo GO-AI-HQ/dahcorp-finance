@@ -1,4 +1,4 @@
-import type { Account, BrokerId, Holding } from '../core/types.js';
+import type { Account, BrokerId, Holding, IncomeEvent } from '../core/types.js';
 import type { ProposedOrder } from '../risk/types.js';
 
 /**
@@ -27,6 +27,12 @@ export type BrokerCapability =
 export interface BrokerAccountData {
   accounts: Account[];
   holdings: Holding[];
+  /**
+   * Cash distributions actually observed in the brokerage account, when the
+   * adapter can supply them. This is optional so current account/position
+   * adapters remain compatible while broker transaction feeds are added.
+   */
+  incomeEvents?: IncomeEvent[];
   /** Provider-reported timestamp. */
   asOf: string;
 }
