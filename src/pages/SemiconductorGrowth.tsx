@@ -32,11 +32,13 @@ export function SemiconductorGrowth() {
     .reduce((sum, row) => sum + row.cash, 0);
   const pulse = intelligence.data?.pulses.find((row) => row.sector === 'semiconductors') ?? null;
   const coreSymbols = ['SEMI', 'SMH', 'AMD'];
-  const core = coreSymbols.map((symbol) => d.signals.find((row) => row.symbol === symbol)).filter((row): row is NonNullable<typeof row> => Boolean(row));
-  const tactical = ['SOXL', 'TSMX'].map((symbol) => d.signals.find((row) => row.symbol === symbol)).filter((row): row is NonNullable<typeof row> => Boolean(row));
+  const tacticalSymbols = ['SOXL', 'TSMX'];
+  const coreRows = coreSymbols.map((symbol) => ({ symbol, signal: d.signals.find((row) => row.symbol === symbol) ?? null }));
+  const tacticalRows = tacticalSymbols.map((symbol) => ({ symbol, signal: d.signals.find((row) => row.symbol === symbol) ?? null }));
+  const availableCore = coreRows.map((row) => row.signal).filter((row): row is NonNullable<typeof row> => Boolean(row));
   const restrictiveIntel = pulse?.label === 'Cautious' || pulse?.policy === 'restrictive';
 
-  const best = core
+  const best = availableCore
     .filter((row) => row.dip.actionable && row.trend.status === 'TREND_CONFIRMED')
     .sort((a, b) => (b.dip.declineFromReference ?? 0) - (a.dip.declineFromReference ?? 0))[0] ?? null;
   const headline = restrictiveIntel
@@ -60,20 +62,34 @@ export function SemiconductorGrowth() {
 
       <Card label="Current decision" title={headline}>
         <div className="grid grid--4">
-          <div className="panel"><span className="soft">Growth Cash Queue</span><strong style={{ display: 'block', marginTop: 4 }}>{formatMoney(growthCash)}</strong><p className="meta">Cash may remain idle or combine with future contributions for fractional accumulation.</p></div>
-          <div className="panel"><span className="soft">Market Intelligence</span><strong style={{ display: 'block', marginTop: 4 }}>{pulse?.label ?? 'Building evidence'}</strong><p className="meta">Policy: {pulse?.policy ?? 'unknown'} · News: {pulse?.newsPressure ?? 'unknown'}</p></div>
+          <div className="panel"><span className="soft">Growth cash</span><strong style={{ display: 'block', marginTop: 4 }}>{formatMoney(growthCash)}</strong><p className="meta">Cash may remain idle or combine with future contributions for fractional accumulation.</p></div>
+          <div className="panel"><span className="soft">Market view</span><strong style={{ display: 'block', marginTop: 4 }}>{pulse?.label ?? 'Building evidence'}</strong><p className="meta">Policy: {pulse?.policy ?? 'unknown'} · News: {pulse?.newsPressure ?? 'unknown'}</p></div>
           <div className="panel"><span className="soft">Best price setup</span><strong style={{ display: 'block', marginTop: 4 }}>{best?.symbol ?? 'None qualified'}</strong><p className="meta">{best ? `${formatPct(best.dip.declineFromReference ?? 0, 1)} below its reference.` : 'A decline alone is not enough.'}</p></div>
           <div className="panel"><span className="soft">Allocation amount</span><strong style={{ display: 'block', marginTop: 4 }}>Modeling Lab decides</strong><p className="meta">The amount comes from live cash, current shares/cost basis, overlap, evidence and risk—not an arbitrary tranche percentage.</p></div>
         </div>
         <div className="row" style={{ gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
-          <Link className="btn btn--sm btn--gold" to={modelTo}>Build Proposed Allocation</Link>
-          <Link className="btn btn--sm btn--ghost" to="/portfolio">Open Growth Cash Queue</Link>
+          <Link className="btn btn--sm btn--gold" to={modelTo}>Build proposed allocation</Link>
+          <Link className="btn btn--sm btn--ghost" to="/portfolio">Open Growth cash</Link>
           <Link className="btn btn--sm btn--ghost" to="/intelligence">Why the market view?</Link>
         </div>
       </Card>
 
       <div className="grid grid--3 section">
-        {core.map((row) => {
+        {coreRows.map(({ symbol, signal: row }) => {
+          const position = p.positions.find((item) => item.symbol === symbol) ?? null;
+          const holdingSummary = position
+            ? `${position.shares.toFixed(position.shares >= 1 ? 3 : 5)} sh${position.costBasisKnown && position.costBasisPerShare != null ? ` · ${formatMoney(position.costBasisPerShare)} avg cost` : ''}`
+            : 'No confirmed position';
+
+          if (!row) {
+            return (
+              <Card key={symbol} label={`${symbol} · Core growth`} title="Waiting for market evidence" action={<Badge tone="warning">Updating</Badge>}>
+                <p className="meta"><strong>Portfolio:</strong> {holdingSummary} · Growth cash {formatMoney(growthCash)}.</p>
+                <p className="meta">This card stays in place while price history or the latest signal is unavailable. DAHCorp will not replace the missing signal with a made-up trend.</p>
+              </Card>
+            );
+          }
+
           const decision = restrictiveIntel
             ? 'WAIT'
             : row.trend.status !== 'TREND_CONFIRMED'
@@ -81,10 +97,6 @@ export function SemiconductorGrowth() {
               : row.dip.actionable
                 ? 'ELIGIBLE TO MODEL'
                 : 'WAIT';
-          const position = p.positions.find((item) => item.symbol === row.symbol) ?? null;
-          const holdingSummary = position
-            ? `${position.shares.toFixed(position.shares >= 1 ? 3 : 5)} sh${position.costBasisKnown && position.costBasisPerShare != null ? ` · ${formatMoney(position.costBasisPerShare)} avg cost` : ''}`
-            : 'No confirmed position';
           const rowModelTo = `/modeling-lab?symbol=${encodeURIComponent(row.symbol)}&side=buy&question=${encodeURIComponent(`Should I make a fractional/DCA add to ${row.symbol} now from the Robinhood Growth Cash Queue? Current holding: ${holdingSummary}. Growth cash: ${formatMoney(growthCash)}. Compare the proposed purchase with holding cash, and if an add improves the plan give the exact dollar amount, estimated fractional shares, projected average cost and remaining cash. Do not treat the buy-zone flag as an automatic trade.`)}`;
           return (
             <Card key={row.symbol} label={`${row.symbol} · Core growth`} title={decision} action={<Badge tone={decision === 'ELIGIBLE TO MODEL' ? 'positive' : 'neutral'}>{row.dip.actionable ? 'Buy zone reached' : 'No buy zone'}</Badge>}>
@@ -99,7 +111,14 @@ export function SemiconductorGrowth() {
       </div>
 
       <div className="grid grid--2 section">
-        {tactical.map((row) => {
+        {tacticalRows.map(({ symbol, signal: row }) => {
+          if (!row) {
+            return (
+              <Card key={symbol} label={`${symbol} · High-risk tactical`} title="Waiting for market evidence" tone="risk">
+                <p className="meta">The tactical card stays visible while the latest price/trend evidence is incomplete. No tactical decision is inferred from missing data.</p>
+              </Card>
+            );
+          }
           const tacticalDecision = row.trend.status === 'TREND_LOST' ? 'DO NOT ADD' : row.dip.actionable ? 'WATCH — tactical only' : 'WAIT';
           return (
             <Card key={row.symbol} label={`${row.symbol} · High-risk tactical`} title={tacticalDecision} tone="risk">
