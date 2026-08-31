@@ -9,14 +9,17 @@ import { recordAudit, saveRecommendation } from './store.mts';
 import type { ProposedOrder } from '../../src/risk/types.js';
 import type { AgentRequest } from './agentModel.mts';
 import { buildMarketIntelligencePayload } from './intelligenceEngine.mts';
+import { loadAdvancedEvidenceFabric } from './intelligenceV3.mts';
+import { compactAdvancedEvidence } from './intelligenceContext.mts';
 
 export async function prepareAnalysis(question: string, requestedCapital?: number) {
-  // Read the latest persisted production intelligence in parallel with the
-  // portfolio snapshot. Provider refreshes happen on the hourly observer so an
-  // Analyze request never blocks on dozens of external intelligence calls.
-  const [ctx, intelligence] = await Promise.all([
+  // Read the latest stored research in parallel with the portfolio. Provider
+  // refreshes happen separately so a user question does not wait on dozens of
+  // outside data calls before the strategist can begin.
+  const [ctx, intelligence, advanced] = await Promise.all([
     buildServerContext(),
     buildMarketIntelligencePayload({ refresh: false, limit: 100 }),
+    loadAdvancedEvidenceFabric(),
   ]);
   const signals = buildSignalsPayload(ctx);
   const policyCapital = investableCapital(ctx);
@@ -40,9 +43,9 @@ export async function prepareAnalysis(question: string, requestedCapital?: numbe
     question,
   });
 
-  // Deliberately compact the evidence packet before it reaches an LLM. The
-  // complete ledger remains persisted; Terra receives the most decision-relevant
-  // recent evidence plus normalized macro/reference state and provenance.
+  // Keep the model packet compact. The full event ledger and raw V3 source
+  // snapshots stay stored server-side; OpenAI receives the decision-relevant
+  // summaries, current coverage and provenance rather than a giant raw dump.
   const eventIntelligence = {
     asOf: intelligence.asOf,
     providers: intelligence.providers,
@@ -55,6 +58,7 @@ export async function prepareAnalysis(question: string, requestedCapital?: numbe
     capitalSignals: intelligence.capitalSignals.slice(0, 20),
     policyEvents: intelligence.policyEvents.slice(0, 20),
     events: intelligence.events.slice(0, 60),
+    deeperResearch: compactAdvancedEvidence(advanced),
     note: intelligence.note,
   };
 
@@ -141,7 +145,7 @@ export async function finalizePreparedAnalysis(
     ? `OpenAI (${agent.model})`
     : agent.source === 'claude'
       ? `Claude (${agent.model})`
-      : 'Deterministic policy';
+      : 'Safety rules';
   await recordAudit({
     category: 'agent',
     action: 'analyze',
@@ -180,6 +184,6 @@ export async function finalizePreparedAnalysis(
     riskDecision,
     baseline: { plan, riskDecision: baselineDecision },
     executionEnabled: false,
-    phaseNote: 'Analysis is advisory. Live execution remains governed by broker-specific preview, confirmation and reconciliation.',
+    phaseNote: 'This is a recommendation only. Any broker action still has to pass the safety checks and the confirmation rules you have chosen.',
   };
 }
