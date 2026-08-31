@@ -29,6 +29,7 @@ export function OverviewV2() {
   const schwab = p.accounts.filter((a) => a.account.broker === 'schwab');
   const brokerValue = (rows: typeof p.accounts) => rows.reduce((acc, row) => acc + row.totalValue, 0);
   const selfFunding = income.data?.income.selfFundingMilestone ?? null;
+  const selfFundingDataComplete = Boolean(selfFunding?.perSymbol.length && selfFunding.perSymbol.every((row) => row.sharesRequired != null && row.capitalRequired != null));
   const eta = p.velocity.linearMonthsToMilestone;
   const basisUnknown = p.positions.filter((position) => position.verified && position.marketValue > 0 && position.costBasisTotal === 0);
   const reserveEntered = p.config.externalLiquidityCurrent > 0;
@@ -59,9 +60,9 @@ export function OverviewV2() {
     <>
       <PageHead
         eyebrow="Overview"
-        title="Your treasury today"
-        lede="See where you stand, what is moving you toward your goals, and what needs a decision. Material issues now flow from Opportunities into Modeling Lab and then to the broker action queue."
-        action={<Badge tone="intel" glyph="◆">Human-confirmed execution</Badge>}
+        title="Your money today"
+        lede="See where you stand, what is moving you toward your goals, and what needs a decision. Important issues flow from Opportunities into Modeling Lab and then to the broker action queue."
+        action={<Badge tone="intel" glyph="◆">You confirm every trade</Badge>}
       />
 
       <DataBanner containsMockData={p.containsMockData} sourceNotes={p.sourceNotes} asOf={p.asOf} />
@@ -81,21 +82,21 @@ export function OverviewV2() {
             ? `${basisUnknown.length} transferred position${basisUnknown.length === 1 ? '' : 's'} missing broker cost basis; total gain/loss is hidden rather than guessed.`
             : `Cash ${formatMoney(p.totals.totalCash)} · invested ${formatMoney(p.totals.totalInvested, 0)}`}
         />
-        <StatCard label="Robinhood" value={formatMoney(brokerValue(robinhood), 0)} caption={`${formatMoney(growthCash)} Growth Cash Queue · ${robinhood.reduce((a, row) => a + row.positionCount, 0)} positions`} />
-        <StatCard label="Charles Schwab" value={formatMoney(brokerValue(schwab), 0)} caption={`${formatMoney(incomeCash)} Income 3085 · ${formatMoney(maritimeCash)} Maritime cash`} />
+        <StatCard label="Robinhood" value={formatMoney(brokerValue(robinhood), 0)} caption={`${formatMoney(growthCash)} Growth cash · ${robinhood.reduce((a, row) => a + row.positionCount, 0)} positions`} />
+        <StatCard label="Charles Schwab" value={formatMoney(brokerValue(schwab), 0)} caption={`${formatMoney(incomeCash)} Income cash · ${formatMoney(maritimeCash)} Shipping cash`} />
         <StatCard label="Income-producing capital" value={formatMoney(s.incomeEngineCapital, 0)} tone="ice" caption="Capital currently assigned to the recurring-income strategy." />
 
         <StatCard label="Income actually received (30d)" value={formatMoney(s.received30d)} badge={{ text: 'Received', tone: 'positive', glyph: '✓' }} caption={`Lifetime ${formatMoney(s.receivedLifetime)} · last 7 days ${formatMoney(s.received7d)}`} />
-        <StatCard label="Projected monthly income" value={formatMoney(s.forwardMonthlyIncome)} badge={{ text: 'Modeled', tone: 'ice', glyph: 'i' }} caption={`Conservative planning estimate ${formatMoney(s.conservativeMonthlyIncome)}/mo. This is modeled until broker distribution history is imported.`} />
-        <StatCard label={`${formatMoney(milestone.targetMonthlyIncome, 0)}/mo goal`} value={formatPct(Math.min(milestone.progress, 1), 1)} tone="gold" caption={milestone.requiredCapital != null ? `About ${formatMoneyCompact(milestone.capitalGap ?? 0)} more income-producing capital at the current modeled rate.` : 'Needs more distribution history before required capital can be modeled.'} />
-        <StatCard label="Estimated time to goal" value={eta == null ? 'Not enough momentum yet' : formatMonths(eta)} badge={{ text: 'Projection', tone: 'warning', glyph: '▲' }} caption={eta == null ? 'DAHCorp will not invent an arrival date while observed income momentum is insufficient.' : 'Projection only; it changes with contributions, distributions and market conditions.'} />
+        <StatCard label="Projected monthly income" value={s.blendedDistributionRate == null ? 'Waiting for income data' : formatMoney(s.forwardMonthlyIncome)} badge={{ text: 'Modeled', tone: 'ice', glyph: 'i' }} caption={s.blendedDistributionRate == null ? 'Verified distribution history has not reached the income model yet, so the app is not treating $0 as the expected income.' : `Conservative planning estimate ${formatMoney(s.conservativeMonthlyIncome)}/mo.`} />
+        <StatCard label={`${formatMoney(milestone.targetMonthlyIncome, 0)}/mo goal`} value={milestone.requiredCapital == null ? 'Waiting for income data' : formatPct(Math.min(milestone.progress, 1), 1)} tone="gold" caption={milestone.requiredCapital != null ? `About ${formatMoneyCompact(milestone.capitalGap ?? 0)} more income-producing capital at the current modeled rate.` : 'Needs verified distribution history before required capital can be modeled.'} />
+        <StatCard label="Estimated time to goal" value={eta == null ? 'Not enough data yet' : formatMonths(eta)} badge={{ text: 'Projection', tone: 'warning', glyph: '▲' }} caption={eta == null ? 'DAHCorp will not invent an arrival date while income history or observed momentum is insufficient.' : 'Projection only; it changes with contributions, distributions and market conditions.'} />
       </div>
 
-      <Card label="Decision pipeline" title="From a problem to an executable action">
+      <Card label="Decision path" title="From a problem to an action you can review">
         <div className="grid grid--3">
-          <div className="panel"><strong>1 · Opportunities</strong><p className="meta">Identify the issue or setup that could materially improve Growth, Income or Maritime strategy.</p><Link className="btn btn--sm btn--ghost" to="/growth?tab=opportunities">Open Opportunities</Link></div>
-          <div className="panel"><strong>2 · Modeling</strong><p className="meta">Compare the current plan with a concrete BUY, SELL, rotation or HOLD CASH proposal and see the Proposed Model.</p><Link className="btn btn--sm btn--gold" to={`/modeling-lab?question=${encodeURIComponent(modelingQuestion)}`}>Model highest-priority issue</Link></div>
-          <div className="panel"><strong>3 · Action Queue</strong><p className="meta">Preview live-capable transaction legs and type the exact confirmation only after fresh broker checks pass.</p><Link className="btn btn--sm btn--ghost" to="/portfolio">Open Portfolio</Link></div>
+          <div className="panel"><strong>1 · Opportunities</strong><p className="meta">Identify the issue or setup that could materially improve Growth, Income or Shipping.</p><Link className="btn btn--sm btn--ghost" to="/growth?tab=opportunities">Open Opportunities</Link></div>
+          <div className="panel"><strong>2 · Modeling</strong><p className="meta">Compare the current plan with a concrete buy, sell, rotation or hold-cash alternative.</p><Link className="btn btn--sm btn--gold" to={`/modeling-lab?question=${encodeURIComponent(modelingQuestion)}`}>Model highest-priority issue</Link></div>
+          <div className="panel"><strong>3 · Action queue</strong><p className="meta">Preview supported broker actions and confirm only after fresh account and safety checks pass.</p><Link className="btn btn--sm btn--ghost" to="/portfolio">Open Portfolio</Link></div>
         </div>
       </Card>
 
@@ -106,7 +107,7 @@ export function OverviewV2() {
         <Card label="Milestones" title="Your income ladder">
           <div className="stack stack--tight">
             {p.milestones.map((row) => (
-              <ProgressBar key={row.id} label={`${formatMoney(row.targetMonthlyIncome, 0)}/mo`} value={row.progress} valueLabel={row.reached ? 'Reached' : formatPct(row.progress, 1)} tone={row.reached ? 'positive' : row.id === p.config.activeMilestoneId ? 'gold' : 'ice'} caption={row.requiredCapital != null ? `≈ ${formatMoneyCompact(row.requiredCapital)} income-producing capital at the modeled rate` : undefined} />
+              <ProgressBar key={row.id} label={`${formatMoney(row.targetMonthlyIncome, 0)}/mo`} value={row.progress} valueLabel={row.reached ? 'Reached' : row.requiredCapital == null ? 'Waiting for income data' : formatPct(row.progress, 1)} tone={row.reached ? 'positive' : row.id === p.config.activeMilestoneId ? 'gold' : 'ice'} caption={row.requiredCapital != null ? `≈ ${formatMoneyCompact(row.requiredCapital)} income-producing capital at the modeled rate` : 'Verified distribution history is required before this milestone can be calculated.'} />
             ))}
           </div>
         </Card>
@@ -116,10 +117,14 @@ export function OverviewV2() {
         <Card label="Self-funding milestone" title="When the income engine can buy another share itself">
           {selfFunding?.perSymbol.length ? (
             <div className="stack stack--tight">
-              <ProgressBar label="Progress toward one self-bought share per month" value={selfFunding.combinedProgress} tone={selfFunding.allSelfFunding ? 'positive' : 'gold'} caption={`Current model requires about ${formatMoney(selfFunding.totalCapitalRequired, 0)} across ${selfFunding.perSymbol.length} income positions.`} />
+              {selfFundingDataComplete ? (
+                <ProgressBar label="Progress toward one self-bought share per month" value={selfFunding.combinedProgress} tone={selfFunding.allSelfFunding ? 'positive' : 'gold'} caption={`Current model requires about ${formatMoney(selfFunding.totalCapitalRequired, 0)} across ${selfFunding.perSymbol.length} income positions.`} />
+              ) : (
+                <div className="banner banner--warning"><div><strong>Waiting for verified distribution history</strong><p className="meta">The app knows how many shares you own, but it will not say you need $0 or guess how many more shares are required until it has a usable payment history for each income position.</p></div></div>
+              )}
               <div className="table-wrap">
                 <table className="data"><thead><tr><th>Symbol</th><th>Shares now</th><th>Shares needed</th><th>Still needed</th></tr></thead><tbody>
-                  {selfFunding.perSymbol.map((row) => <tr key={row.symbol}><th>{row.symbol}</th><td className="num">{formatShares(row.shares)}</td><td className="num">{row.sharesRequired == null ? '—' : formatShares(row.sharesRequired)}</td><td className="num">{row.sharesRemaining == null ? '—' : formatShares(row.sharesRemaining)}</td></tr>)}
+                  {selfFunding.perSymbol.map((row) => <tr key={row.symbol}><th>{row.symbol}</th><td className="num">{formatShares(row.shares)}</td><td className="num">{row.sharesRequired == null ? 'Waiting for income data' : formatShares(row.sharesRequired)}</td><td className="num">{row.sharesRemaining == null ? '—' : formatShares(row.sharesRemaining)}</td></tr>)}
                 </tbody></table>
               </div>
             </div>
@@ -127,12 +132,14 @@ export function OverviewV2() {
         </Card>
 
         <Card label="Income momentum" title="How your projected monthly income is changing">
-          {!p.priorSnapshotAsOf ? (
+          {s.blendedDistributionRate == null ? (
+            <><strong>Waiting for verified income history</strong><p className="meta">Your monthly contribution can still be set, but the app cannot translate it into added monthly income until the underlying distribution rate is known.</p></>
+          ) : !p.priorSnapshotAsOf ? (
             <><strong>Not enough observed history yet</strong><p className="meta">DAHCorp has a forward model, but it will not call a modeled difference “momentum” until there is a prior production observation to compare.</p></>
           ) : (
             <div className="stack stack--tight">
               <div className="key-value"><span>From new contributions</span><strong>{formatMoney(p.velocity.contributionDriven)}/mo</strong></div>
-              <div className="key-value"><span>From reinvestment (DRIP)</span><strong>{formatMoney(p.velocity.dripDriven)}/mo</strong></div>
+              <div className="key-value"><span>From reinvestment</span><strong>{formatMoney(p.velocity.dripDriven)}/mo</strong></div>
               <div className="key-value"><span>From market / distribution-rate change</span><strong>{formatSignedMoney(p.velocity.marketDriven)}/mo</strong></div>
               <div className="key-value"><span>Total change</span><strong>{formatSignedMoney(p.velocity.total)}/mo</strong></div>
             </div>
@@ -142,13 +149,13 @@ export function OverviewV2() {
       </div>
 
       <div className="grid grid--2 section">
-        <Card label="Investment guardrails" title="Your safeguards">
+        <Card label="Investment safeguards" title="Your safeguards">
           <div className="stack stack--tight">
             <ProgressBar label="High-risk tactical investments" value={p.leveraged.maxPct > 0 ? p.leveraged.pct / p.leveraged.maxPct : 0} valueLabel={`${formatMoney(p.leveraged.value, 0)} of about ${formatMoney(maxTacticalDollars, 0)} allowed`} tone="risk" caption={`Your policy caps daily-reset leveraged products at ${formatPct(p.leveraged.maxPct, 0)} of portfolio value.`} />
-            <div className="key-value"><span>Growth Cash Queue</span><strong>{formatMoney(growthCash)}</strong></div>
-            <div className="key-value"><span>Income 3085 Cash Queue</span><strong>{formatMoney(incomeCash)}</strong></div>
-            <div className="key-value"><span>Maritime Cash Queue</span><strong>{formatMoney(maritimeCash)}</strong></div>
-            {otherBrokerCash > 0 ? <div className="key-value"><span>Other broker cash — visible, not agent-authorized</span><strong>{formatMoney(otherBrokerCash)}</strong></div> : null}
+            <div className="key-value"><span>Growth cash</span><strong>{formatMoney(growthCash)}</strong></div>
+            <div className="key-value"><span>Income cash</span><strong>{formatMoney(incomeCash)}</strong></div>
+            <div className="key-value"><span>Shipping cash</span><strong>{formatMoney(maritimeCash)}</strong></div>
+            {otherBrokerCash > 0 ? <div className="key-value"><span>Other broker cash — visible, not available to the app for investing</span><strong>{formatMoney(otherBrokerCash)}</strong></div> : null}
             <div className="key-value"><span>Outside emergency reserve</span><strong>{reserveEntered ? `${formatMoney(p.config.externalLiquidityCurrent, 0)} of ${formatMoney(p.config.externalLiquidityTarget, 0)}` : 'Status not entered'}</strong></div>
             <p className="meta">{p.concentrationBreaches.length ? `${p.concentrationBreaches.length} confirmed position limit finding(s) need review.` : 'No confirmed position limit is currently breached.'}</p>
           </div>
@@ -169,7 +176,7 @@ export function OverviewV2() {
               <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}><Link className="btn btn--sm btn--ghost" to="/growth?tab=opportunities">See opportunities</Link><Link className="btn btn--sm btn--ghost" to="/portfolio">Open action queue</Link></div>
             </div>
           ) : (
-            <><strong>No urgent portfolio action</strong><p className="meta">Cash can remain queued until an Income, Growth or Maritime opportunity actually qualifies.</p><p className="meta"><Link to="/intelligence">Check Market Intelligence →</Link></p></>
+            <><strong>No urgent portfolio action</strong><p className="meta">Cash can remain queued until an Income, Growth or Shipping opportunity actually qualifies.</p><p className="meta"><Link to="/intelligence">Check Market →</Link></p></>
           )}
         </Card>
       </div>
