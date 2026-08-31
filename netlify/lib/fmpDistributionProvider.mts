@@ -108,7 +108,7 @@ export class FmpDistributionClient {
     if (!this.isConfigured()) throw new FmpProviderError('FMP dividend data is not configured.');
 
     const budget = await reserveFmpCall(`company-dividends:${symbol.toUpperCase()}`, this.env);
-    if (!budget.available && budget.remaining <= 0) {
+    if (!budget.reserved) {
       throw new FmpProviderError(budget.note, 429);
     }
 
