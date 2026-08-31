@@ -160,8 +160,10 @@ export async function finalizePreparedAnalysis(
   prepared: PreparedAnalysis,
   agent: AgentResult,
   modelInputAsOf = prepared.ctx.snapshot.asOf,
+  modelDataProvenance: ModelDataProvenance = prepared.dataProvenance,
+  modelInputFingerprint: string | null = null,
 ) {
-  const { ctx, signals, capital, plan, digest, dataProvenance } = prepared;
+  const { ctx, capital, plan, digest, dataProvenance: riskCheckDataProvenance } = prepared;
   const riskContext = {
     asOf: ctx.snapshot.asOf,
     analysis: ctx.analysis,
@@ -208,6 +210,8 @@ export async function finalizePreparedAnalysis(
     headline: agent.brief.headline,
     confidence: agent.brief.confidence,
     brief: agent.brief,
+    // This digest reflects the deterministic state used for the final risk
+    // decision. Async model-input lineage is stored separately below.
     portfolioSnapshot: digest,
     deterministicOutcome: {
       plan,
@@ -215,7 +219,9 @@ export async function finalizePreparedAnalysis(
       baselineDecision,
       modelInputAsOf,
       riskSnapshotAsOf: ctx.snapshot.asOf,
-      dataProvenance,
+      modelInputFingerprint,
+      modelDataProvenance,
+      riskCheckDataProvenance,
     },
   });
 
@@ -237,11 +243,17 @@ export async function finalizePreparedAnalysis(
       model: agent.model,
       modelInputAsOf,
       riskSnapshotAsOf: ctx.snapshot.asOf,
-      modelDataReadMode: dataProvenance.preparation.readMode,
-      portfolioPreparedAt: dataProvenance.portfolio.preparedAt,
-      portfolioFreshness: dataProvenance.portfolio.freshness,
-      marketFreshness: dataProvenance.market.freshness,
-      intelligenceFreshness: dataProvenance.intelligence.freshness,
+      modelInputFingerprint,
+      modelDataReadMode: modelDataProvenance.preparation.readMode,
+      riskCheckDataReadMode: riskCheckDataProvenance.preparation.readMode,
+      modelPortfolioPreparedAt: modelDataProvenance.portfolio.preparedAt,
+      riskPortfolioPreparedAt: riskCheckDataProvenance.portfolio.preparedAt,
+      modelPortfolioFreshness: modelDataProvenance.portfolio.freshness,
+      riskPortfolioFreshness: riskCheckDataProvenance.portfolio.freshness,
+      modelMarketFreshness: modelDataProvenance.market.freshness,
+      riskMarketFreshness: riskCheckDataProvenance.market.freshness,
+      modelIntelligenceFreshness: modelDataProvenance.intelligence.freshness,
+      riskIntelligenceFreshness: riskCheckDataProvenance.intelligence.freshness,
       riskApproved: riskDecision.approved,
       blockedCodes: riskDecision.orders
         .flatMap((o) => o.findings)
@@ -254,9 +266,14 @@ export async function finalizePreparedAnalysis(
   return {
     asOf: ctx.snapshot.asOf,
     modelInputAsOf,
+    riskSnapshotAsOf: ctx.snapshot.asOf,
+    modelInputFingerprint,
     containsMockData: ctx.snapshot.containsMockData,
     sourceNotes: ctx.snapshot.sourceNotes,
-    dataProvenance,
+    // Backward-compatible alias for the state used to validate the result.
+    dataProvenance: riskCheckDataProvenance,
+    modelDataProvenance,
+    riskCheckDataProvenance,
     recommendationId,
     question,
     capital,
