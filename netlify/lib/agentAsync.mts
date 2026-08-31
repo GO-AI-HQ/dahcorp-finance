@@ -127,6 +127,13 @@ function requestBody(request: AgentRequest) {
   };
 }
 
+/** SHA-256 of the exact OpenAI runtime input string; no credential material is included. */
+export async function fingerprintAgentRuntimeInput(request: AgentRequest): Promise<string> {
+  const bytes = new TextEncoder().encode(openAIRuntimeTreasuryInput(request));
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  return [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 export async function startAgentRecommendation(request: AgentRequest): Promise<AgentStartResult> {
   if (configuredProvider() !== 'openai') {
     return { state: 'completed', agent: await requestAgentRecommendation(request) };

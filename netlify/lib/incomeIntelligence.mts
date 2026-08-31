@@ -1,5 +1,5 @@
 import type { IntelligenceEvent } from '../../src/intelligence/types.js';
-import type { ServerContext } from './context.mts';
+import type { AnalysisContext } from '../../src/services/analysis.js';
 import { INCOME_UNIVERSE, WATCHLISTS } from '../../src/core/universe.js';
 import { getFmpDistributions, storedFmpSnapshots } from './fmpDistributionProvider.mts';
 import { latestIntelligenceEventByPurpose, persistIntelligenceEvents } from './intelligenceStore.mts';
@@ -411,7 +411,7 @@ function stabilityRank(value: IncomeCandidate['payoutVariability']): number {
   return value === 'low' ? 3 : value === 'moderate' ? 2 : value === 'high' ? 1 : 0;
 }
 
-export function buildStrategyMutationProposals(ctx: ServerContext, snapshot: IncomeIntelligenceSnapshot | null): StrategyMutationProposal[] {
+export function buildStrategyMutationProposals(ctx: AnalysisContext, snapshot: IncomeIntelligenceSnapshot | null): StrategyMutationProposal[] {
   if (!snapshot) return [];
   const held = new Set(ctx.income.positions.map((position) => position.symbol.toUpperCase()));
   const heldResearch = snapshot.candidates.filter((row) => held.has(row.symbol));
@@ -476,7 +476,7 @@ export function buildStrategyMutationProposals(ctx: ServerContext, snapshot: Inc
   return proposals.slice(0, 4);
 }
 
-export async function incomeIntelligenceForContext(ctx: ServerContext) {
+export async function incomeIntelligenceForContext(ctx: AnalysisContext) {
   const snapshot = await loadIncomeIntelligence();
   return {
     snapshot,

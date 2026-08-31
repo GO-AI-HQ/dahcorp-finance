@@ -1,24 +1,15 @@
 import type { Config } from '@netlify/functions';
-import { INCOME_UNIVERSE } from '../../src/core/universe.js';
-import { getFmpDistributions } from '../lib/fmpDistributionProvider.mts';
-import { persistStableDistributionEvidence } from '../lib/stableDistributionEvidence.mts';
+import { refreshDistributionEvidence } from '../lib/marketEvidenceRefresh.mts';
 
 /**
- * Warm the verified FMP dividend cache once per day. Dividend declarations are
- * low-frequency data; a 24-hour cache plus the OpenBB fallback is enough for
- * personal strategy modeling and leaves substantial room inside the 250-call
- * daily plan for discovery and newly-held symbols.
- *
- * Last-good distribution snapshots are persisted here, outside interactive
- * page requests, so Overview/Income/Strategy Lab never wait on persistence.
+ * Daily low-frequency distribution refresh. This remains the single scheduled
+ * path allowed to spend FMP dividend-history calls. The result now updates the
+ * existing FMP cache/stable evidence and the new per-symbol Market Snapshot in
+ * one pass, with OpenBB retained as fallback where FMP has no usable history.
  */
 export default async () => {
-  const asOf = new Date().toISOString().slice(0, 10);
-  const result = await getFmpDistributions([...INCOME_UNIVERSE], asOf, 420, { forceRefresh: true });
-  if (result.events.length) {
-    await persistStableDistributionEvidence(result.events, 'scheduled FMP distribution refresh');
-  }
-  console.log(`[dahcorp] FMP distribution refresh: symbols=${INCOME_UNIVERSE.length} calls=${result.callsUsed} events=${result.events.length}.`);
+  const result = await refreshDistributionEvidence();
+  console.log(`[dahcorp] distribution evidence refresh: requested=${result.requested} stored=${result.stored} fmpCalls=${result.fmpCallsUsed} marketSnapshotPersisted=${result.marketSnapshotPersisted}.`);
 };
 
 export const config: Config = {

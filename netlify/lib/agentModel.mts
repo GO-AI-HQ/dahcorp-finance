@@ -1,6 +1,7 @@
 import { RECOMMENDATION_TOOL, parseRecommendation } from '../../src/agent/schema.js';
 import type { AgentDigest } from '../../src/agent/digest.js';
 import type { AgentResult, RecommendationBrief } from '../../src/agent/types.js';
+import type { ModelDataProvenance } from '../../src/agent/provenance.js';
 import { openAIErrorDiagnostic, safeOpenAIErrorFromPayload, type SafeOpenAIError } from '../../src/agent/openaiDiagnostics.js';
 import type { StrategyConfig } from '../../src/core/config.js';
 import { requestRecommendation as requestClaudeRecommendation } from './claude.mts';
@@ -15,6 +16,7 @@ export interface AgentRequest {
   shadowEvidence?: unknown;
   eventIntelligence?: unknown;
   claudeResearchBrief?: unknown;
+  dataProvenance?: ModelDataProvenance;
   deterministicBrief: RecommendationBrief;
 }
 
@@ -116,7 +118,7 @@ function promptValue(value: unknown): string {
 }
 
 export function openAIRuntimeTreasuryInput(request: AgentRequest): string {
-  const { question, digest, capital, config, shadowEvidence, eventIntelligence, claudeResearchBrief } = request;
+  const { question, digest, capital, config, shadowEvidence, eventIntelligence, claudeResearchBrief, dataProvenance } = request;
   return [
     '══════════════════════════════════════',
     'RUNTIME TREASURY CONTEXT',
@@ -124,12 +126,13 @@ export function openAIRuntimeTreasuryInput(request: AgentRequest): string {
     `AS OF\n${digest.asOf}`,
     `USER QUESTION\n${question}`,
     `AVAILABLE CAPITAL\n${capital.toFixed(2)}`,
+    `DATA PROVENANCE\n${promptValue(dataProvenance)}`,
     `PORTFOLIO DIGEST\n${promptValue(digest)}`,
     `STRATEGY POLICY\n${promptValue(config)}`,
     `SHADOW MODE EVIDENCE\n${promptValue(shadowEvidence)}`,
     `EVENT INTELLIGENCE\n${promptValue(eventIntelligence)}`,
     `CLAUDE RESEARCH BRIEF\n${promptValue(claudeResearchBrief)}`,
-    'Treat this runtime context as the authoritative instance-specific input for the current analysis. Missing fields remain UNKNOWN, never zero.',
+    'Treat this runtime context as the authoritative instance-specific input for the current analysis. Provenance describes evidence freshness and lineage, not execution authority. Missing fields remain UNKNOWN, never zero.',
   ].join('\n\n');
 }
 

@@ -1,3 +1,5 @@
+import type { ModelDataProvenance } from './provenance.js';
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 export const DEFAULT_JOB_TTL_SECONDS = 15 * 60;
@@ -12,7 +14,7 @@ function fromBase64url(value: string): Uint8Array<ArrayBuffer> {
   const padded = value.replace(/-/g, '+').replace(/_/g, '/');
   const binary = atob(padded + '='.repeat((4 - (padded.length % 4)) % 4));
   const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return bytes;
 }
 
@@ -28,12 +30,32 @@ export interface TreasuryAgentJob {
   question: string;
   capital: number;
   inputAsOf: string;
+  /** SHA-256 of the exact provider runtime input string submitted to OpenAI. */
+  modelInputFingerprint?: string;
+  /** Safe, non-secret lineage/freshness envelope for the original model input. */
+  modelDataProvenance?: ModelDataProvenance;
   iat: number;
   exp: number;
 }
 
 export function isOpenAIResponseId(value: unknown): value is string {
   return typeof value === 'string' && /^resp_[A-Za-z0-9_-]{6,200}$/.test(value);
+}
+
+function validFingerprint(value: unknown): value is string {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+}
+
+function validProvenance(value: unknown): value is ModelDataProvenance {
+  if (!value || typeof value !== 'object') return false;
+  const row = value as Partial<ModelDataProvenance>;
+  return row.schemaVersion === 1
+    && typeof row.generatedAt === 'string'
+    && Boolean(row.preparation)
+    && Boolean(row.portfolio)
+    && Boolean(row.market)
+    && Boolean(row.intelligence)
+    && Array.isArray(row.constraints);
 }
 
 export async function issueAgentJobTokenWithSecret(
@@ -46,6 +68,8 @@ export async function issueAgentJobTokenWithSecret(
   if (!isOpenAIResponseId(input.responseId)) throw new Error('Invalid OpenAI response id.');
   if (!input.question.trim() || input.question.length > 600) throw new Error('Invalid Treasury question.');
   if (!Number.isFinite(input.capital) || input.capital < 0) throw new Error('Invalid Treasury capital.');
+  if (input.modelInputFingerprint != null && !validFingerprint(input.modelInputFingerprint)) throw new Error('Invalid Treasury model input fingerprint.');
+  if (input.modelDataProvenance != null && !validProvenance(input.modelDataProvenance)) throw new Error('Invalid Treasury model provenance.');
 
   const issuedAt = Math.floor(now / 1000);
   const payload: TreasuryAgentJob = {
@@ -76,6 +100,8 @@ export async function verifyAgentJobTokenWithSecret(
     if (typeof payload.question !== 'string' || !payload.question.trim() || payload.question.length > 600) return null;
     if (typeof payload.capital !== 'number' || !Number.isFinite(payload.capital) || payload.capital < 0) return null;
     if (typeof payload.inputAsOf !== 'string' || !payload.inputAsOf) return null;
+    if (payload.modelInputFingerprint != null && !validFingerprint(payload.modelInputFingerprint)) return null;
+    if (payload.modelDataProvenance != null && !validProvenance(payload.modelDataProvenance)) return null;
     if (typeof payload.iat !== 'number' || typeof payload.exp !== 'number') return null;
     if (payload.exp <= nowSeconds || payload.iat > nowSeconds + 60 || payload.exp <= payload.iat) return null;
     return payload as TreasuryAgentJob;

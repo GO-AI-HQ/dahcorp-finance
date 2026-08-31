@@ -2,7 +2,7 @@ import { fail, json, methodNotAllowed, readJsonBody, withErrorHandling } from '.
 import { requireSession } from '../lib/session.mts';
 import { STANDING_QUESTIONS } from '../../src/agent/prompt.js';
 import { prepareAnalysis, agentRequestFor, finalizePreparedAnalysis } from '../lib/analysisPipeline.mts';
-import { startAgentRecommendation } from '../lib/agentAsync.mts';
+import { fingerprintAgentRuntimeInput, startAgentRecommendation } from '../lib/agentAsync.mts';
 import { issueAgentJobToken } from '../lib/agentJobToken.mts';
 
 export default withErrorHandling('analyze', async (req: Request) => {
@@ -15,7 +15,8 @@ export default withErrorHandling('analyze', async (req: Request) => {
   if (!question) return fail(400, 'MISSING_QUESTION', 'A question is required.');
 
   const prepared = await prepareAnalysis(question, body?.capital);
-  const started = await startAgentRecommendation(agentRequestFor(question, prepared));
+  const agentRequest = agentRequestFor(question, prepared);
+  const started = await startAgentRecommendation(agentRequest);
 
   if (started.state === 'pending') {
     const jobToken = await issueAgentJobToken({
@@ -23,6 +24,8 @@ export default withErrorHandling('analyze', async (req: Request) => {
       question,
       capital: prepared.capital,
       inputAsOf: prepared.ctx.snapshot.asOf,
+      modelInputFingerprint: await fingerprintAgentRuntimeInput(agentRequest),
+      modelDataProvenance: prepared.dataProvenance,
     });
     return json({
       pending: true,
@@ -32,6 +35,7 @@ export default withErrorHandling('analyze', async (req: Request) => {
       question,
       capital: prepared.capital,
       model: started.model,
+      dataProvenance: prepared.dataProvenance,
     }, 202, { 'Retry-After': '2' });
   }
 

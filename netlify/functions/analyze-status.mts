@@ -27,14 +27,24 @@ export default withErrorHandling('analyze-status', async (req: Request) => {
       question: job.question,
       capital: job.capital,
       model: poll.model,
+      modelDataProvenance: job.modelDataProvenance ?? null,
+      modelInputFingerprint: job.modelInputFingerprint ?? null,
     }, 202, { 'Retry-After': '2' });
   }
 
-  // The model reasoned against the snapshot identified by job.inputAsOf. Before
-  // accepting any proposed allocation, rebuild the portfolio and re-run the
-  // deterministic policy engine against the freshest available brokerage state.
+  // The model reasoned against the original signed provenance/fingerprint in
+  // the job token. Final deterministic validation intentionally uses the latest
+  // available prepared state. We persist both lineages so a newer risk snapshot
+  // can never be mistaken for the evidence the model originally received.
   const prepared = await prepareAnalysis(job.question, job.capital);
   const agent = backgroundPollToAgentResult(poll, prepared.deterministicBrief);
-  const result = await finalizePreparedAnalysis(job.question, prepared, agent, job.inputAsOf);
+  const result = await finalizePreparedAnalysis(
+    job.question,
+    prepared,
+    agent,
+    job.inputAsOf,
+    job.modelDataProvenance ?? prepared.dataProvenance,
+    job.modelInputFingerprint ?? null,
+  );
   return json({ ...result, standingQuestions: STANDING_QUESTIONS });
 });
