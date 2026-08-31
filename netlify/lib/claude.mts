@@ -1,9 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { buildSystemPrompt, buildUserPrompt } from '../../src/agent/prompt.js';
 import { RECOMMENDATION_TOOL, parseRecommendation } from '../../src/agent/schema.js';
-import type { AgentDigest } from '../../src/agent/digest.js';
-import type { AgentResult, RecommendationBrief } from '../../src/agent/types.js';
-import type { StrategyConfig } from '../../src/core/config.js';
+import type { AgentResult } from '../../src/agent/types.js';
+import type { AgentRequest } from './agentModel.mts';
 
 const ALLOWED_MODELS = new Set([
   'claude-sonnet-4-6',
@@ -39,12 +38,10 @@ export function modelAvailable(env?: NodeJS.ProcessEnv): boolean {
   return Boolean(secret(env));
 }
 
-export interface AgentRequest {
-  question: string;
-  digest: AgentDigest;
-  capital: number;
-  config: StrategyConfig;
-  deterministicBrief: RecommendationBrief;
+function promptValue(value: unknown): string {
+  if (value == null) return JSON.stringify({ status: 'not_available' });
+  if (typeof value === 'string') return value;
+  return JSON.stringify(value);
 }
 
 function client(): Anthropic | null {
@@ -53,7 +50,17 @@ function client(): Anthropic | null {
 }
 
 export async function requestRecommendation(request: AgentRequest): Promise<AgentResult> {
-  const { question, digest, capital, config, deterministicBrief } = request;
+  const {
+    question,
+    digest,
+    capital,
+    config,
+    deterministicBrief,
+    shadowEvidence,
+    eventIntelligence,
+    claudeResearchBrief,
+    dataProvenance,
+  } = request;
   const anthropic = client();
   if (!anthropic) {
     return {
@@ -70,10 +77,22 @@ export async function requestRecommendation(request: AgentRequest): Promise<Agen
     const message = await anthropic.messages.create({
       model,
       max_tokens: 2048,
-      system: buildSystemPrompt(config),
+      system: [
+        buildSystemPrompt(config),
+        'The DATA PROVENANCE envelope is authoritative for evidence lineage and freshness. Prepared or retained evidence may support analysis but never execution. Treat missing or expired evidence as UNKNOWN and never infer zero.',
+      ].join('\n\n'),
       tools: [RECOMMENDATION_TOOL],
       tool_choice: { type: 'tool', name: RECOMMENDATION_TOOL.name },
-      messages: [{ role: 'user', content: buildUserPrompt({ question, digest, capital }) }],
+      messages: [{
+        role: 'user',
+        content: [
+          buildUserPrompt({ question, digest, capital }),
+          `DATA PROVENANCE\n${promptValue(dataProvenance)}`,
+          `EVENT INTELLIGENCE\n${promptValue(eventIntelligence)}`,
+          `SHADOW MODE EVIDENCE\n${promptValue(shadowEvidence)}`,
+          `CLAUDE RESEARCH BRIEF\n${promptValue(claudeResearchBrief)}`,
+        ].join('\n\n'),
+      }],
     });
     const toolUse = message.content.find((block): block is Extract<typeof block, { type: 'tool_use' }> => block.type === 'tool_use');
     const brief = toolUse ? parseRecommendation(toolUse.input) : null;
@@ -114,8 +133,9 @@ export interface ClaudeResearchBrief {
  */
 export async function requestResearchBrief(input: {
   question: string;
-  digest: AgentDigest;
+  digest: AgentRequest['digest'];
   eventIntelligence?: unknown;
+  dataProvenance?: AgentRequest['dataProvenance'];
 }): Promise<ClaudeResearchBrief> {
   const anthropic = client();
   if (!anthropic) return { available: false, model: null, text: 'Claude research is unavailable in this runtime.', usage: null };
@@ -129,6 +149,7 @@ export async function requestResearchBrief(input: {
         'Your job is to pressure-test the supplied portfolio, market, filings, fund, options, earnings, policy and public-disclosure evidence before the Strategist makes the final recommendation.',
         'You do not place trades, authorize trades, change safety rules or decide that money is investable.',
         'Separate verified facts from interpretation. Point out stale information, contradictory evidence and important missing data.',
+        'Use the supplied DATA PROVENANCE to distinguish fresh, retained and unavailable evidence. Retained evidence can support research continuity but is never execution pricing.',
         'Pay special attention to whether the evidence actually changes the user’s financial goal or whether doing nothing remains the better choice.',
         'Do not invent prices, yields, historical outcomes, filings, bank eligibility, fund holdings or facts that were not supplied.',
         'Write a concise second-opinion research brief in normal human language. Another model will use it as evidence, not as authority.',
@@ -137,6 +158,7 @@ export async function requestResearchBrief(input: {
         role: 'user',
         content: [
           `QUESTION\n${input.question}`,
+          `DATA PROVENANCE\n${promptValue(input.dataProvenance)}`,
           `PORTFOLIO AND PLAN\n${JSON.stringify(input.digest)}`,
           `CURRENT RESEARCH\n${JSON.stringify(input.eventIntelligence ?? { status: 'not_available' })}`,
         ].join('\n\n'),
