@@ -10,7 +10,9 @@ import { validateOrders } from '../../src/risk/engine.js';
 import { getInstrumentOrFallback } from '../../src/core/universe.js';
 import type { ProposedOrder } from '../../src/risk/types.js';
 import type { RecommendationBrief } from '../../src/agent/types.js';
-import { recentIntelligenceEvents } from '../lib/intelligenceStore.mts';
+import { buildMarketIntelligencePayload } from '../lib/intelligenceEngine.mts';
+import { loadAdvancedEvidenceFabric } from '../lib/intelligenceV3.mts';
+import { compactAdvancedEvidence } from '../lib/intelligenceContext.mts';
 import { saveRecommendation } from '../lib/store.mts';
 
 function mandateAccounts(ctx: Awaited<ReturnType<typeof buildServerContext>>, sector: string | null, question: string) {
@@ -23,15 +25,15 @@ function mandateAccounts(ctx: Awaited<ReturnType<typeof buildServerContext>>, se
 
 function holdBrief(question: string, capital: number): RecommendationBrief {
   return {
-    headline: 'Hold the available cash until the evidence can support a specific move.',
+    headline: 'Keep the available cash where it is until the evidence supports a specific move.',
     confidence: 'low',
-    thesis: `The Modeling Lab could not establish a sufficiently supported reallocation for "${question}". Preserving ${capital.toFixed(2)} of available mandate cash is preferable to manufacturing a trade.`,
+    thesis: `Modeling Lab could not establish a sufficiently supported change for "${question}". Keeping ${capital.toFixed(2)} available is better than manufacturing a trade.`,
     legs: [],
-    risks: ['Acting without a validated model/research brief could convert incomplete evidence into an unnecessary transaction.'],
+    risks: ['Acting on incomplete information could create an unnecessary transaction.'],
     alternative: null,
-    etaImpact: 'No modeled change to the goal until a supported strategy is available.',
-    notes: ['Holding cash is an active strategy decision.'],
-    dataCaveats: ['The model layer or required evidence may be unavailable.'],
+    etaImpact: 'No modeled change to the goal until a well-supported option is available.',
+    notes: ['Doing nothing with the cash is a valid decision.'],
+    dataCaveats: ['Some model or research information may be unavailable.'],
   };
 }
 
@@ -42,6 +44,12 @@ function incomeRate(symbol: string, ctx: Awaited<ReturnType<typeof buildServerCo
   return candidate ?? null;
 }
 
+function shouldAskClaude(question: string, hasAttachedEvent: boolean, researchCoverage: number): boolean {
+  if (hasAttachedEvent) return true;
+  if (researchCoverage <= 0) return false;
+  return /compare|research|income|yield|dividend|fund|etf|overlap|earnings|options|shipping|energy|semiconductor|chip|savings|cash|rate|rotate|rotation|risk|macro|why/i.test(question);
+}
+
 export default withErrorHandling('model-strategy', async (req: Request) => {
   if (req.method !== 'POST') return methodNotAllowed(['POST']);
   const { response } = await requireSession(req);
@@ -50,10 +58,15 @@ export default withErrorHandling('model-strategy', async (req: Request) => {
   const question = String(body?.question ?? 'What is the best use of the relevant strategy cash right now?').slice(0, 900).trim();
   if (!question) return fail(400, 'MISSING_QUESTION', 'A Modeling Lab question is required.');
 
-  const ctx = await buildServerContext();
+  const [ctx, intelligence, advanced] = await Promise.all([
+    buildServerContext(),
+    buildMarketIntelligencePayload({ refresh: false, limit: 120 }),
+    loadAdvancedEvidenceFabric(),
+  ]);
   const signals = buildSignalsPayload(ctx);
-  const storedEvents = body?.eventFingerprint ? await recentIntelligenceEvents(250) : [];
-  const event = body?.eventFingerprint ? storedEvents.find((row) => row.fingerprint === body.eventFingerprint) ?? null : null;
+  const event = body?.eventFingerprint
+    ? intelligence.events.find((row) => row.fingerprint === body.eventFingerprint) ?? null
+    : null;
   const accounts = mandateAccounts(ctx, event?.sector ?? null, question);
   const mandateCash = accounts.reduce((sum, account) => sum + Math.max(0, account.cash), 0);
   const requested = typeof body?.capital === 'number' && Number.isFinite(body.capital) ? body.capital : mandateCash;
@@ -62,16 +75,36 @@ export default withErrorHandling('model-strategy', async (req: Request) => {
   const plan = buildPlan(ctx, capital);
   const digest = buildAgentDigest({ ctx, plan, opportunities: signals.opportunities, semis: signals.semis, drag: signals.drag, capital });
   const fallback = event ? holdBrief(question, capital) : buildDeterministicBrief({ ctx, plan, opportunities: signals.opportunities, semis: signals.semis, drag: signals.drag, question });
-  const research = event
-    ? await requestResearchBrief({ question, digest, eventIntelligence: event })
-    : { available: false, model: null, text: 'No material source event was attached to this model.', usage: null };
+  const researchContext = {
+    attachedEvent: event,
+    market: {
+      asOf: intelligence.asOf,
+      providers: intelligence.providers,
+      pulses: intelligence.pulses,
+      marketPulse: intelligence.marketPulse,
+      macroRegime: intelligence.macroRegime,
+      economicCalendar: intelligence.economicCalendar.slice(0, 24),
+      capitalSignals: intelligence.capitalSignals.slice(0, 20),
+      policyEvents: intelligence.policyEvents.slice(0, 20),
+      events: intelligence.events.slice(0, 60),
+    },
+    deeperResearch: compactAdvancedEvidence(advanced),
+  };
+
+  // Claude is the independent research analyst, not the final decision-maker.
+  // Use it when a question actually benefits from specialist research; routine
+  // background refreshes never spend model tokens.
+  const research = shouldAskClaude(question, Boolean(event), advanced.fusion.coveragePct)
+    ? await requestResearchBrief({ question, digest, eventIntelligence: researchContext })
+    : { available: false, model: null, text: 'A separate specialist research pass was not needed for this question.', usage: null };
+
   const agent = await requestAgentRecommendation({
     question,
     digest,
     capital,
     config: ctx.config,
     deterministicBrief: fallback,
-    eventIntelligence: event ?? { status: 'not_attached' },
+    eventIntelligence: researchContext,
     claudeResearchBrief: research.available ? research.text : { status: 'not_available' },
   });
 
@@ -124,11 +157,11 @@ export default withErrorHandling('model-strategy', async (req: Request) => {
     const account = accounts.find((row) => row.id === validated.order.accountId);
     if (!account) continue;
     if (account.broker === 'robinhood') {
-      manualSteps.push(`${validated.order.side.toUpperCase()} ${validated.order.symbol}: DAHCorp can route this to the Robinhood guarded preview when human-confirmed execution is armed.`);
+      manualSteps.push(`${validated.order.side.toUpperCase()} ${validated.order.symbol}: this can be sent to Robinhood for a final preview only when your confirmation settings allow it.`);
     } else if (account.broker === 'schwab' && validated.order.side === 'buy' && validated.order.symbol === 'YMAG') {
-      manualSteps.push(`BUY YMAG: DAHCorp can route this to Schwab 3085's guarded whole-share preview when sufficient cash is available.`);
+      manualSteps.push(`BUY YMAG: this can be sent to Schwab 3085 for a whole-share preview when enough cash is available and your confirmation settings allow it.`);
     } else {
-      manualSteps.push(`${validated.order.side.toUpperCase()} ${validated.order.symbol}: the strategy can be adopted and staged in DAHCorp, but this broker/symbol leg still requires a supported live execution adapter or manual broker action.`);
+      manualSteps.push(`${validated.order.side.toUpperCase()} ${validated.order.symbol}: this can be saved as part of the plan, but this broker/symbol combination still requires either a supported broker connection or a manual trade.`);
     }
   }
 
@@ -145,6 +178,7 @@ export default withErrorHandling('model-strategy', async (req: Request) => {
       riskDecision,
       sourceEventFingerprint: event?.fingerprint ?? null,
       claudeResearch: { available: research.available, model: research.model, text: research.text },
+      researchCoverage: advanced.fusion,
       modelingImpact: { currentMonthlyIncome: ctx.income.forwardMonthlyIncome, proposedMonthlyIncome, monthlyIncomeDelta, currentIncomeCapital: ctx.income.incomeEngineCapital, proposedIncomeCapital, proposedRate },
     },
   });
@@ -174,7 +208,7 @@ export default withErrorHandling('model-strategy', async (req: Request) => {
     proposedProjection: modeled.projection,
     manualSteps,
     note: incomeCapitalDelta === 0
-      ? 'This proposal does not immediately change modeled investment income. Its Growth/Maritime benefit should be judged by exposure, entry quality and eventual capital recycling rather than pretending it creates income today.'
-      : 'The Proposed Model line uses the post-strategy income capital and modeled distribution rate. It is a scenario, not a forecast.',
+      ? 'This proposal does not immediately change modeled investment income. Judge a Growth or Maritime move by entry quality, exposure and the long-term plan rather than pretending it creates income today.'
+      : 'The proposed model uses the post-change income capital and modeled distribution rate. It is a scenario, not a forecast.',
   });
 });
