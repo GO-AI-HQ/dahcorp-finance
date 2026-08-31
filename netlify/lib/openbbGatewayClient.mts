@@ -34,6 +34,13 @@ function deriveSigningKeyValue(sessionSecret: string): string {
   return Buffer.concat([ED25519_PKCS8_SEED_PREFIX, seed]).toString('base64');
 }
 
+export function resolveOpenBBSigningKeyValue(env?: RuntimeEnv): string {
+  const dedicatedKey = envValue('OPENBB_GATEWAY_SIGNING_KEY', env)?.trim() || '';
+  if (dedicatedKey) return dedicatedKey;
+  const sessionSecret = envValue('DAHCORP_SESSION_SECRET', env)?.trim() || '';
+  return sessionSecret ? deriveSigningKeyValue(sessionSecret) : '';
+}
+
 export class OpenBBGatewayError extends Error {
   constructor(
     message: string,
@@ -59,9 +66,7 @@ export class SignedOpenBBGatewayClient {
 
   constructor(env?: RuntimeEnv, private readonly fetchImpl: typeof fetch = fetch) {
     this.baseUrl = (envValue('OPENBB_GATEWAY_URL', env)?.trim() || '').replace(/\/$/, '');
-    const dedicatedKey = envValue('OPENBB_GATEWAY_SIGNING_KEY', env)?.trim() || '';
-    const sessionSecret = envValue('DAHCORP_SESSION_SECRET', env)?.trim() || '';
-    this.signingKeyValue = dedicatedKey || (sessionSecret ? deriveSigningKeyValue(sessionSecret) : '');
+    this.signingKeyValue = resolveOpenBBSigningKeyValue(env);
   }
 
   isConfigured(): boolean {
