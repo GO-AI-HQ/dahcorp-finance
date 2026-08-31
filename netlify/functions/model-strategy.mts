@@ -11,8 +11,9 @@ import { getInstrumentOrFallback } from '../../src/core/universe.js';
 import type { ProposedOrder } from '../../src/risk/types.js';
 import type { RecommendationBrief } from '../../src/agent/types.js';
 import { buildMarketIntelligencePayload } from '../lib/intelligenceEngine.mts';
-import { loadAdvancedEvidenceFabric } from '../lib/intelligenceV3.mts';
+import { loadStableAdvancedEvidenceFabric } from '../lib/intelligenceV3Stable.mts';
 import { compactAdvancedEvidence } from '../lib/intelligenceContext.mts';
+import { buildStrategyMutationProposals, loadIncomeIntelligence } from '../lib/incomeIntelligence.mts';
 import { saveRecommendation } from '../lib/store.mts';
 
 function mandateAccounts(ctx: Awaited<ReturnType<typeof buildServerContext>>, sector: string | null, question: string) {
@@ -44,8 +45,9 @@ function incomeRate(symbol: string, ctx: Awaited<ReturnType<typeof buildServerCo
   return candidate ?? null;
 }
 
-function shouldAskClaude(question: string, hasAttachedEvent: boolean, researchCoverage: number): boolean {
+function shouldAskClaude(question: string, hasAttachedEvent: boolean, researchCoverage: number, hasIncomeResearch: boolean): boolean {
   if (hasAttachedEvent) return true;
+  if (hasIncomeResearch && /income|yield|dividend|rotate|rotation|replace|reweight|shipping|fund|etf/i.test(question)) return true;
   if (researchCoverage <= 0) return false;
   return /compare|research|income|yield|dividend|fund|etf|overlap|earnings|options|shipping|energy|semiconductor|chip|savings|cash|rate|rotate|rotation|risk|macro|why/i.test(question);
 }
@@ -58,10 +60,11 @@ export default withErrorHandling('model-strategy', async (req: Request) => {
   const question = String(body?.question ?? 'What is the best use of the relevant strategy cash right now?').slice(0, 900).trim();
   if (!question) return fail(400, 'MISSING_QUESTION', 'A Modeling Lab question is required.');
 
-  const [ctx, intelligence, advanced] = await Promise.all([
+  const [ctx, intelligence, advanced, incomeResearch] = await Promise.all([
     buildServerContext(),
     buildMarketIntelligencePayload({ refresh: false, limit: 120 }),
-    loadAdvancedEvidenceFabric(),
+    loadStableAdvancedEvidenceFabric(),
+    loadIncomeIntelligence(),
   ]);
   const signals = buildSignalsPayload(ctx);
   const event = body?.eventFingerprint
@@ -89,12 +92,20 @@ export default withErrorHandling('model-strategy', async (req: Request) => {
       events: intelligence.events.slice(0, 60),
     },
     deeperResearch: compactAdvancedEvidence(advanced),
+    incomeResearch: incomeResearch ? {
+      asOf: incomeResearch.asOf,
+      sourceStatus: incomeResearch.sourceStatus,
+      upcoming: incomeResearch.upcoming.slice(0, 24),
+      candidates: incomeResearch.candidates.slice(0, 16),
+      strategyChangeIdeas: buildStrategyMutationProposals(ctx, incomeResearch),
+      rule: 'The research universe can change automatically. The approved/executable universe cannot. Treat a new ticker as a candidate until deterministic policy and the investor approve it.',
+    } : { status: 'not_available' },
   };
 
   // Claude is the independent research analyst, not the final decision-maker.
   // Use it when a question actually benefits from specialist research; routine
   // background refreshes never spend model tokens.
-  const research = shouldAskClaude(question, Boolean(event), advanced.fusion.coveragePct)
+  const research = shouldAskClaude(question, Boolean(event), advanced.fusion.coveragePct, Boolean(incomeResearch))
     ? await requestResearchBrief({ question, digest, eventIntelligence: researchContext })
     : { available: false, model: null, text: 'A separate specialist research pass was not needed for this question.', usage: null };
 
@@ -179,6 +190,7 @@ export default withErrorHandling('model-strategy', async (req: Request) => {
       sourceEventFingerprint: event?.fingerprint ?? null,
       claudeResearch: { available: research.available, model: research.model, text: research.text },
       researchCoverage: advanced.fusion,
+      incomeResearchAsOf: incomeResearch?.asOf ?? null,
       modelingImpact: { currentMonthlyIncome: ctx.income.forwardMonthlyIncome, proposedMonthlyIncome, monthlyIncomeDelta, currentIncomeCapital: ctx.income.incomeEngineCapital, proposedIncomeCapital, proposedRate },
     },
   });
