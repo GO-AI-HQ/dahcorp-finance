@@ -22,7 +22,7 @@ function explanationFor(error: unknown, label: string): { state: CheckState; det
       return {
         state: 'blocked',
         httpStatus: 401,
-        detail: `${label} was rejected by the Google gateway. DAHCorp's private signing key and the gateway's public verification key do not match. Redeploy the latest gateway build in Cloud Run.`,
+        detail: `${label} was rejected by the Google gateway. DAHCorp's signing identity and the gateway's public verification key do not match. Redeploy the latest gateway build in Cloud Run.`,
       };
     }
     if (error.status === 502 || error.status === 503 || error.status === 504) {
@@ -69,7 +69,9 @@ export default withErrorHandling('intelligence-diagnostics', async (req: Request
   if (response) return response;
 
   const gatewayUrl = runtimeEnv('OPENBB_GATEWAY_URL')?.trim() || '';
-  const signingKeyPresent = Boolean(runtimeEnv('OPENBB_GATEWAY_SIGNING_KEY')?.trim());
+  const dedicatedSigningKeyPresent = Boolean(runtimeEnv('OPENBB_GATEWAY_SIGNING_KEY')?.trim());
+  const sessionSecretPresent = Boolean(runtimeEnv('DAHCORP_SESSION_SECRET')?.trim());
+  const signingIdentityPresent = dedicatedSigningKeyPresent || sessionSecretPresent;
   const finnhubPresent = Boolean(runtimeEnv('FINNHUB_API_KEY')?.trim());
   const rateApiPresent = Boolean(runtimeEnv('RATEAPI_API_KEY')?.trim());
   const client = new SignedOpenBBGatewayClient();
@@ -94,9 +96,9 @@ export default withErrorHandling('intelligence-diagnostics', async (req: Request
       label: 'Signed OpenBB access',
       state: 'not_configured' as const,
       httpStatus: null,
-      detail: signingKeyPresent
-        ? 'The signing key is present, but the gateway address is missing.'
-        : 'The Google gateway may be online, but DAHCorp cannot make private data requests because its request-signing key is missing.',
+      detail: gatewayUrl
+        ? 'The Google gateway is online, but DAHCorp has no signing identity available for private OpenBB data requests.'
+        : 'The Google gateway address is missing.',
     });
   } else {
     const today = new Date().toISOString().slice(0, 10);
@@ -117,13 +119,13 @@ export default withErrorHandling('intelligence-diagnostics', async (req: Request
     overall,
     configuration: {
       gatewayAddressPresent: Boolean(gatewayUrl),
-      signingKeyPresent,
+      signingKeyPresent: signingIdentityPresent,
       finnhubPresent,
       rateApiPresent,
     },
     checks,
     nextStep: blocked?.detail ?? warning?.detail ?? (overall === 'working'
-      ? 'The connection path is working. Refresh Market Intelligence to populate the latest V2 and V3 evidence.'
+      ? 'The connection path is working. Refresh Market to populate the latest V2 and V3 research.'
       : 'Finish the missing configuration, then run this check again.'),
     note: 'This diagnostic reports only connection state. It never returns API keys, signing material or broker credentials.',
   });
