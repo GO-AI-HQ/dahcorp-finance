@@ -25,6 +25,7 @@ import { createRobinhoodGateway } from './robinhoodMcp.mts';
 import { SchwabHybridMarketDataProvider } from './schwabMarketProvider.mts';
 import { OpenBBGatewayMarketDataProvider, SchwabOpenBBMarketDataProvider } from './openbbGatewayProvider.mts';
 import { resolveOpenBBSigningKeyValue } from './openbbGatewayClient.mts';
+import { FmpPreferredMarketDataProvider } from './fmpDistributionProvider.mts';
 import type { SchwabAdapter } from '../../src/brokers/schwab/adapter.js';
 
 export function todayISO(now = new Date()): string {
@@ -244,15 +245,21 @@ export function selectMarketProvider(
     ].map((symbol) => symbol.toUpperCase())),
   ];
 
+  let base: MarketDataProvider;
   if (openbb.isConfigured()) {
-    return schwab
+    base = schwab
       ? new SchwabOpenBBMarketDataProvider(schwab, openbb, openbbEnv, historySymbols)
       : openbb;
+  } else if (schwab) {
+    base = new SchwabHybridMarketDataProvider(schwab, env, historySymbols, fetch, !strictProduction);
+  } else {
+    base = strictProduction ? unavailableProductionMarketProvider() : mockMarketDataProvider;
   }
-  if (schwab) {
-    return new SchwabHybridMarketDataProvider(schwab, env, historySymbols, fetch, !strictProduction);
-  }
-  return strictProduction ? unavailableProductionMarketProvider() : mockMarketDataProvider;
+
+  const fmpApiKey = runtimeEnv('FMP_API_KEY', env)?.trim();
+  return fmpApiKey
+    ? new FmpPreferredMarketDataProvider(base, { ...env, FMP_API_KEY: fmpApiKey })
+    : base;
 }
 
 export async function buildServerContext(options: { asOf?: string } = {}): Promise<ServerContext> {

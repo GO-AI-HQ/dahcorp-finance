@@ -71,6 +71,7 @@ export interface IntelligenceDiagnostics {
     signingKeyPresent: boolean;
     finnhubPresent: boolean;
     rateApiPresent: boolean;
+    fmpPresent: boolean;
   };
   checks: Array<{
     label: string;
