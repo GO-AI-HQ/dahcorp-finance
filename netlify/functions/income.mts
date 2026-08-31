@@ -1,6 +1,6 @@
 import { json, methodNotAllowed, withErrorHandling } from '../lib/http.mts';
 import { requireSession } from '../lib/session.mts';
-import { buildServerContext, type ServerContext } from '../lib/context.mts';
+import { buildServerContext } from '../lib/context.mts';
 import { loadPreparedAnalysisContext } from '../lib/preparedPortfolioSnapshot.mts';
 import { buildIncomePayload } from '../../src/services/analysis.js';
 import { priorIncomeSnapshot } from '../lib/store.mts';
@@ -23,7 +23,7 @@ export default withErrorHandling('income', async (req: Request) => {
   const ctx = prepared ?? await buildServerContext();
   const [prior, incomeIntelligence] = await Promise.all([
     priorIncomeSnapshot(ctx.snapshot.asOf),
-    incomeIntelligenceForContext(ctx as ServerContext),
+    incomeIntelligenceForContext(ctx),
   ]);
   return json({
     ...buildIncomePayload(ctx, prior?.forwardMonthlyIncome ?? null),
