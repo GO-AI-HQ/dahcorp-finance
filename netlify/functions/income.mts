@@ -3,13 +3,15 @@ import { requireSession } from '../lib/session.mts';
 import { buildServerContext } from '../lib/context.mts';
 import { buildIncomePayload } from '../../src/services/analysis.js';
 import { priorIncomeSnapshot } from '../lib/store.mts';
+import { incomeIntelligenceForContext } from '../lib/incomeIntelligence.mts';
 
 /**
  * GET /.netlify/functions/income
  *
  * The income engine: received vs modeled cash flow, per-position distribution
  * statistics, self-buy ratios, the self-funding micro-milestone and the capital
- * required for each income target.
+ * required for each income target. Stored income discovery is joined to the
+ * same verified portfolio context without making a new FMP request.
  */
 export default withErrorHandling('income', async (req: Request) => {
   if (req.method !== 'GET') return methodNotAllowed(['GET']);
@@ -17,6 +19,12 @@ export default withErrorHandling('income', async (req: Request) => {
   if (response) return response;
 
   const ctx = await buildServerContext();
-  const prior = await priorIncomeSnapshot(ctx.snapshot.asOf);
-  return json(buildIncomePayload(ctx, prior?.forwardMonthlyIncome ?? null));
+  const [prior, incomeIntelligence] = await Promise.all([
+    priorIncomeSnapshot(ctx.snapshot.asOf),
+    incomeIntelligenceForContext(ctx),
+  ]);
+  return json({
+    ...buildIncomePayload(ctx, prior?.forwardMonthlyIncome ?? null),
+    incomeIntelligence,
+  });
 });
