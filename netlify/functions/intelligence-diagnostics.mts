@@ -36,7 +36,7 @@ function explanationFor(error: unknown, label: string): { state: CheckState; det
       return {
         state: 'warning',
         httpStatus: 404,
-        detail: `${label} authenticated successfully, but that route or upstream OpenBB capability is not present in the running gateway build.`,
+        detail: `${label} authenticated successfully, but that route or upstream OpenBB capability is not present in the running build.`,
       };
     }
     return {
@@ -48,10 +48,24 @@ function explanationFor(error: unknown, label: string): { state: CheckState; det
   return { state: 'warning', httpStatus: null, detail: `${label} could not be verified right now.` };
 }
 
-async function signedProbe(client: SignedOpenBBGatewayClient, label: string, path: string, params: URLSearchParams) {
+async function signedProbe(
+  client: SignedOpenBBGatewayClient,
+  label: string,
+  path: string,
+  params: URLSearchParams,
+  options: { requireResults?: boolean } = {},
+) {
   try {
     const payload = await client.get<Record<string, unknown>>(path, params);
     const results = Array.isArray(payload.results) ? payload.results.length : null;
+    if (options.requireResults && results === 0) {
+      return {
+        label,
+        state: 'warning' as const,
+        httpStatus: 200,
+        detail: `${label} reached OpenBB successfully, but this probe returned no usable rows. The route is connected; the remaining issue is provider/data coverage.`,
+      };
+    }
     return {
       label,
       state: 'working' as const,
@@ -102,11 +116,14 @@ export default withErrorHandling('intelligence-diagnostics', async (req: Request
     });
   } else {
     const today = new Date().toISOString().slice(0, 10);
-    const start = new Date(Date.now() - 12 * 86_400_000).toISOString().slice(0, 10);
+    const recentStart = new Date(Date.now() - 12 * 86_400_000).toISOString().slice(0, 10);
+    const incomeStart = new Date(Date.now() - 420 * 86_400_000).toISOString().slice(0, 10);
     checks.push(...await Promise.all([
-      signedProbe(client, 'Quotes and price data', '/v1/quote', new URLSearchParams({ symbol: 'AMD', provider: 'yfinance' })),
-      signedProbe(client, 'Macro and FRED data', '/v2/fred/series', new URLSearchParams({ series: 'DGS10', start_date: start, end_date: today })),
-      signedProbe(client, 'V3 options evidence', '/v3/options/chains', new URLSearchParams({ symbol: 'AMD' })),
+      signedProbe(client, 'Quotes and price data', '/v1/quote', new URLSearchParams({ symbol: 'AMD', provider: 'yfinance' }), { requireResults: true }),
+      signedProbe(client, 'Macro and FRED data', '/v2/fred/series', new URLSearchParams({ series: 'DGS10', start_date: recentStart, end_date: today })),
+      signedProbe(client, 'YMAG distribution history', '/v1/dividends', new URLSearchParams({ symbol: 'YMAG', start_date: incomeStart, end_date: today, provider: 'yfinance' }), { requireResults: true }),
+      signedProbe(client, 'NVDY distribution history', '/v1/dividends', new URLSearchParams({ symbol: 'NVDY', start_date: incomeStart, end_date: today, provider: 'yfinance' }), { requireResults: true }),
+      signedProbe(client, 'V3 options evidence', '/v3/options/chains', new URLSearchParams({ symbol: 'AMD' }), { requireResults: true }),
     ]));
   }
 
@@ -125,8 +142,8 @@ export default withErrorHandling('intelligence-diagnostics', async (req: Request
     },
     checks,
     nextStep: blocked?.detail ?? warning?.detail ?? (overall === 'working'
-      ? 'The connection path is working. Refresh Market to populate the latest V2 and V3 research.'
+      ? 'The connection path is working. Refresh Market to populate the latest market and deeper-research data.'
       : 'Finish the missing configuration, then run this check again.'),
-    note: 'This diagnostic reports only connection state. It never returns API keys, signing material or broker credentials.',
+    note: 'This diagnostic reports only connection and data availability. It never returns API keys, signing material or broker credentials.',
   });
 });
