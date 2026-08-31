@@ -150,13 +150,13 @@ export function StrategyLab() {
       <div className="grid grid--wide-left section">
         <Card label="Goal path" title="Projected monthly investment income">
           {incomeEvidenceAvailable ? (
-            <ProjectionChart series={series} target={result.target} />
+            <ProjectionChart series={series} target={inputs.targetMonthlyIncome} />
           ) : (
             <div className="panel" style={{ minHeight: 220, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
               <div><strong>Waiting for verified income history</strong><p className="meta">The chart will appear when the app can calculate a real distribution rate instead of assuming one.</p></div>
             </div>
           )}
-          <p className="meta" style={{ marginTop: 10 }}>{incomeEvidenceAvailable ? 'Each line uses the same contribution and reinvestment choices below; only the modeled income-rate assumptions differ.' : 'Your contribution choices are still saved and editable while income data is unavailable.'}</p>
+          <p className="meta" style={{ marginTop: 10 }}>{incomeEvidenceAvailable ? 'The target line follows the goal slider immediately. The projection curves update only from the newest completed calculation, so an older request cannot overwrite a newer choice.' : 'Your contribution choices are still saved and editable while income data is unavailable.'}</p>
         </Card>
 
         <Card label="Your choices" title="Change the plan">
