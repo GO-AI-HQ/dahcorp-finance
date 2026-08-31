@@ -3,6 +3,7 @@ import type { MarketDataProvider } from '../../src/market/provider.js';
 import { normalizeFmpDividendRows, type FmpDividendRow } from '../../src/market/fmpDistributions.js';
 import type { IntelligenceEvent } from '../../src/intelligence/types.js';
 import { intelligenceEventsByPurpose, persistIntelligenceEvents } from './intelligenceStore.mts';
+import { reserveFmpCall } from './fmpDailyBudget.mts';
 
 const FMP_BASE_URL = 'https://financialmodelingprep.com/stable';
 export const FMP_DISTRIBUTION_CACHE_PURPOSE = 'fmp_distribution_snapshot';
@@ -95,7 +96,7 @@ export class FmpDistributionClient {
   readonly id = 'fmp-distributions';
   private readonly apiKey: string;
 
-  constructor(env?: RuntimeEnv, private readonly fetchImpl: typeof fetch = fetch) {
+  constructor(private readonly env?: RuntimeEnv, private readonly fetchImpl: typeof fetch = fetch) {
     this.apiKey = envValue('FMP_API_KEY', env)?.trim() || '';
   }
 
@@ -105,6 +106,12 @@ export class FmpDistributionClient {
 
   async fetchCompanyDividends(symbol: string): Promise<FmpDividendRow[]> {
     if (!this.isConfigured()) throw new FmpProviderError('FMP dividend data is not configured.');
+
+    const budget = await reserveFmpCall(`company-dividends:${symbol.toUpperCase()}`, this.env);
+    if (!budget.reserved) {
+      throw new FmpProviderError(budget.note, 429);
+    }
+
     const params = new URLSearchParams({
       symbol: symbol.toUpperCase(),
       limit: String(MAX_ROWS_PER_SYMBOL),
@@ -201,7 +208,7 @@ export async function getFmpDistributions(
           source: 'cache',
           rows: events.length,
           note: allowNetwork
-            ? 'FMP rate-limited this batch; using the last stored snapshot.'
+            ? 'FMP rate-limited or hit its DAHCorp safety budget; using the last stored snapshot.'
             : 'Using the stored FMP snapshot without making a provider call.',
         });
       } else {
@@ -210,7 +217,7 @@ export async function getFmpDistributions(
           source: 'fallback',
           rows: 0,
           note: allowNetwork
-            ? 'FMP rate-limited this batch and no stored snapshot is available; use the OpenBB fallback.'
+            ? 'FMP rate-limited or hit its DAHCorp safety budget and no stored snapshot is available; use the OpenBB fallback.'
             : 'No stored FMP snapshot is available; use the OpenBB fallback.',
         });
       }
@@ -227,8 +234,6 @@ export async function getFmpDistributions(
       statuses.push({ symbol, source: 'fmp', rows: events.length, note: `FMP returned ${rows.length} company-dividend record${rows.length === 1 ? '' : 's'}.` });
     } catch (error) {
       if (error instanceof FmpProviderError && error.status === 429) rateLimited = true;
-      // If today's provider call fails, a stored snapshot is safer than
-      // inventing data. The wrapper can still ask OpenBB for this symbol.
       if (stored) {
         const events = normalizeFmpDividendRows(stored.rows, symbol, asOf, days).map((row) => ({ ...row, dataQuality: 'stale' as const }));
         allEvents.push(...events);
@@ -262,7 +267,8 @@ export class FmpPreferredMarketDataProvider implements MarketDataProvider {
     this.sourceNotes = [
       ...(base.sourceNotes ?? []),
       'Financial Modeling Prep is the preferred distribution-history source. It supplies declared cash amounts and, when available, actual payment dates for income modeling.',
-      'FMP distribution evidence is cached for 24 hours. Normal page navigation reuses the last verified snapshot rather than repeatedly consuming provider calls.',
+      'FMP distribution evidence is cached for 24 hours. Interactive pages read only stored FMP evidence; scheduled server jobs are the only paths allowed to spend provider calls.',
+      'DAHCorp caps its own FMP usage well below the provider limit. When the safety budget is unavailable or exhausted, stored data and OpenBB remain the fallback.',
       'DAHCorp does not trust a provider headline yield as an annualized return. Trailing and modeled rates are calculated from actual distributions and current prices.',
       'Return-of-capital and tax character remain UNKNOWN unless verified by issuer tax or Section 19a evidence.',
     ];
@@ -278,7 +284,9 @@ export class FmpPreferredMarketDataProvider implements MarketDataProvider {
 
   async getDistributions(symbols: string[], asOf: string, days: number): Promise<DistributionEvent[]> {
     const normalized = normalizeSymbols(symbols);
-    const fmp = await getFmpDistributions(normalized, asOf, days, { env: this.env });
+    // Interactive portfolio/Income/Strategy/Agent requests are cache-only for
+    // FMP. Scheduled refresh jobs own network access and fill this cache.
+    const fmp = await getFmpDistributions(normalized, asOf, days, { env: this.env, allowNetwork: false });
     const fmpBySymbol = new Map<string, DistributionEvent[]>();
     for (const event of fmp.events) {
       const list = fmpBySymbol.get(event.symbol) ?? [];
@@ -291,8 +299,6 @@ export class FmpPreferredMarketDataProvider implements MarketDataProvider {
       ? await this.base.getDistributions(needsFallback, asOf, days).catch(() => [] as DistributionEvent[])
       : [];
 
-    // FMP owns symbols where it returned usable history. OpenBB fills only the
-    // remaining gaps, preventing duplicate cash events from entering the model.
     return [
       ...fmp.events,
       ...fallback.filter((event) => !fmpBySymbol.has(event.symbol.toUpperCase())),
