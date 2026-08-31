@@ -129,32 +129,34 @@ export default withErrorHandling('intelligence-diagnostics', async (req: Request
     ]));
   }
 
+  // Diagnostics are deliberately cache-only for FMP. Visiting Market or
+  // re-running a health check must never consume a scarce provider call.
   if (!fmpPresent) {
     checks.push({
       label: 'FMP income distributions',
       state: 'not_configured' as const,
       httpStatus: null,
-      detail: 'Financial Modeling Prep is not configured, so OpenBB remains the only distribution-history source.',
+      detail: 'Financial Modeling Prep is not configured, so OpenBB remains the distribution-history source.',
     });
   } else {
     try {
       const today = new Date().toISOString().slice(0, 10);
-      const fmp = await getFmpDistributions(['YMAG'], today, 420);
+      const fmp = await getFmpDistributions(['YMAG'], today, 420, { allowNetwork: false });
       const ym = fmp.statuses.find((row) => row.symbol === 'YMAG');
       checks.push({
         label: 'FMP income distributions',
         state: fmp.events.length ? 'working' as const : 'warning' as const,
         httpStatus: fmp.events.length ? 200 : null,
         detail: fmp.events.length
-          ? `FMP returned or cached ${fmp.events.length} usable YMAG distribution record${fmp.events.length === 1 ? '' : 's'}. ${ym?.note ?? ''}`.trim()
-          : `FMP is configured but no usable YMAG distribution rows are available yet. ${ym?.note ?? ''}`.trim(),
+          ? `A stored FMP snapshot contains ${fmp.events.length} usable YMAG distribution record${fmp.events.length === 1 ? '' : 's'}. This health check used zero FMP calls.`
+          : `FMP is configured, but no stored YMAG snapshot is available yet. ${ym?.note ?? ''} Diagnostics do not spend FMP calls; the scheduled refresh will try again later.`.trim(),
       });
     } catch {
       checks.push({
         label: 'FMP income distributions',
         state: 'warning' as const,
         httpStatus: null,
-        detail: 'FMP is configured but the income-distribution check could not complete. OpenBB remains the fallback.',
+        detail: 'The stored FMP distribution snapshot could not be read. This diagnostic did not call FMP; OpenBB remains the live fallback.',
       });
     }
   }
