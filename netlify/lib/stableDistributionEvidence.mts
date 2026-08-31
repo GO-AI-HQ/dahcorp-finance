@@ -172,11 +172,15 @@ export class StableDistributionMarketDataProvider implements MarketDataProvider 
 
       if (current.length) {
         out.push(...current);
-        const sources = [
-          ...(providerForSymbol.length ? ['FMP/OpenBB provider stack'] : []),
-          ...(brokerForSymbol.length ? ['broker realized income'] : []),
-        ];
-        await persistSymbolSnapshot(symbol, current, sources).catch(() => undefined);
+        const hasFreshProviderEvidence = providerForSymbol.some((row) => row.dataQuality !== 'stale');
+        const hasBrokerEvidence = brokerForSymbol.length > 0;
+        if (hasFreshProviderEvidence || hasBrokerEvidence) {
+          const sources = [
+            ...(providerForSymbol.length ? ['FMP/OpenBB provider stack'] : []),
+            ...(brokerForSymbol.length ? ['broker realized income'] : []),
+          ];
+          await persistSymbolSnapshot(symbol, current, sources).catch(() => undefined);
+        }
         continue;
       }
 
