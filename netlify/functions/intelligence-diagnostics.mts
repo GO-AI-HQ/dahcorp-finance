@@ -1,6 +1,7 @@
 import { json, methodNotAllowed, withErrorHandling } from '../lib/http.mts';
 import { requireSession } from '../lib/session.mts';
 import { OpenBBGatewayError, SignedOpenBBGatewayClient } from '../lib/openbbGatewayClient.mts';
+import { getFmpDistributions } from '../lib/fmpDistributionProvider.mts';
 
 type CheckState = 'working' | 'warning' | 'blocked' | 'not_configured';
 
@@ -88,6 +89,7 @@ export default withErrorHandling('intelligence-diagnostics', async (req: Request
   const signingIdentityPresent = dedicatedSigningKeyPresent || sessionSecretPresent;
   const finnhubPresent = Boolean(runtimeEnv('FINNHUB_API_KEY')?.trim());
   const rateApiPresent = Boolean(runtimeEnv('RATEAPI_API_KEY')?.trim());
+  const fmpPresent = Boolean(runtimeEnv('FMP_API_KEY')?.trim());
   const client = new SignedOpenBBGatewayClient();
 
   let gatewayHealth: { label: string; state: CheckState; httpStatus: number | null; detail: string };
@@ -121,10 +123,40 @@ export default withErrorHandling('intelligence-diagnostics', async (req: Request
     checks.push(...await Promise.all([
       signedProbe(client, 'Quotes and price data', '/v1/quote', new URLSearchParams({ symbol: 'AMD', provider: 'yfinance' }), { requireResults: true }),
       signedProbe(client, 'Macro and FRED data', '/v2/fred/series', new URLSearchParams({ series: 'DGS10', start_date: recentStart, end_date: today })),
-      signedProbe(client, 'YMAG distribution history', '/v1/dividends', new URLSearchParams({ symbol: 'YMAG', start_date: incomeStart, end_date: today, provider: 'yfinance' }), { requireResults: true }),
-      signedProbe(client, 'NVDY distribution history', '/v1/dividends', new URLSearchParams({ symbol: 'NVDY', start_date: incomeStart, end_date: today, provider: 'yfinance' }), { requireResults: true }),
+      signedProbe(client, 'OpenBB YMAG distribution fallback', '/v1/dividends', new URLSearchParams({ symbol: 'YMAG', start_date: incomeStart, end_date: today, provider: 'yfinance' }), { requireResults: true }),
+      signedProbe(client, 'OpenBB NVDY distribution fallback', '/v1/dividends', new URLSearchParams({ symbol: 'NVDY', start_date: incomeStart, end_date: today, provider: 'yfinance' }), { requireResults: true }),
       signedProbe(client, 'V3 options evidence', '/v3/options/chains', new URLSearchParams({ symbol: 'AMD' }), { requireResults: true }),
     ]));
+  }
+
+  if (!fmpPresent) {
+    checks.push({
+      label: 'FMP income distributions',
+      state: 'not_configured' as const,
+      httpStatus: null,
+      detail: 'Financial Modeling Prep is not configured, so OpenBB remains the only distribution-history source.',
+    });
+  } else {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const fmp = await getFmpDistributions(['YMAG'], today, 420);
+      const ym = fmp.statuses.find((row) => row.symbol === 'YMAG');
+      checks.push({
+        label: 'FMP income distributions',
+        state: fmp.events.length ? 'working' as const : 'warning' as const,
+        httpStatus: fmp.events.length ? 200 : null,
+        detail: fmp.events.length
+          ? `FMP returned or cached ${fmp.events.length} usable YMAG distribution record${fmp.events.length === 1 ? '' : 's'}. ${ym?.note ?? ''}`.trim()
+          : `FMP is configured but no usable YMAG distribution rows are available yet. ${ym?.note ?? ''}`.trim(),
+      });
+    } catch {
+      checks.push({
+        label: 'FMP income distributions',
+        state: 'warning' as const,
+        httpStatus: null,
+        detail: 'FMP is configured but the income-distribution check could not complete. OpenBB remains the fallback.',
+      });
+    }
   }
 
   const blocked = checks.find((check) => check.state === 'blocked');
@@ -139,6 +171,7 @@ export default withErrorHandling('intelligence-diagnostics', async (req: Request
       signingKeyPresent: signingIdentityPresent,
       finnhubPresent,
       rateApiPresent,
+      fmpPresent,
     },
     checks,
     nextStep: blocked?.detail ?? warning?.detail ?? (overall === 'working'
