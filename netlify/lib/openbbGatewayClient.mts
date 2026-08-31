@@ -11,6 +11,29 @@ type RuntimeEnv = Record<string, string | undefined>;
 
 const DERIVED_SIGNING_DOMAIN = 'DAHCORP-OPENBB-GATEWAY-v1\0';
 const ED25519_PKCS8_SEED_PREFIX = Buffer.from('302e020100300506032b657004220420', 'hex');
+const MAX_OPENBB_CONCURRENCY = 3;
+const RETRYABLE_STATUS = new Set([429, 502, 503, 504]);
+
+let activeOpenBBRequests = 0;
+const openBBWaiters: Array<() => void> = [];
+
+async function acquireOpenBBSlot(): Promise<void> {
+  if (activeOpenBBRequests < MAX_OPENBB_CONCURRENCY) {
+    activeOpenBBRequests += 1;
+    return;
+  }
+  await new Promise<void>((resolve) => openBBWaiters.push(resolve));
+  activeOpenBBRequests += 1;
+}
+
+function releaseOpenBBSlot(): void {
+  activeOpenBBRequests = Math.max(0, activeOpenBBRequests - 1);
+  openBBWaiters.shift()?.();
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function envValue(key: string, env?: RuntimeEnv): string | undefined {
   const explicit = env?.[key];
@@ -54,10 +77,12 @@ export class OpenBBGatewayError extends Error {
 
 /**
  * Server-only authenticated client for the DAHCorp OpenBB Cloud Run gateway.
- * A dedicated Ed25519 private key may be supplied through Netlify. If that
- * variable is absent, DAHCorp deterministically derives an isolated Ed25519
- * signing key from the existing session secret using a domain-separated hash.
- * Google stores only the matching public verification key.
+ *
+ * Calls are metered through a small process-level queue. The evidence fabric can
+ * ask for many independent datasets at once, but the gateway/provider stack sees
+ * only a few concurrent requests instead of a burst of dozens. Retryable
+ * rate-limit/gateway failures get one short backoff retry; 4xx validation errors
+ * remain visible immediately so bad provider queries are never hidden.
  */
 export class SignedOpenBBGatewayClient {
   private readonly baseUrl: string;
@@ -100,25 +125,38 @@ export class SignedOpenBBGatewayClient {
     };
   }
 
-  async get<T>(path: string, params: URLSearchParams = new URLSearchParams()): Promise<T> {
-    if (!this.isConfigured()) throw new OpenBBGatewayError('OpenBB gateway is not configured.');
-    const query = params.toString();
-    const suffix = query ? `?${query}` : '';
-    let response: Response;
+  private async fetchOnce(path: string, query: string, suffix: string): Promise<Response> {
     try {
-      response = await this.fetchImpl(`${this.baseUrl}${path}${suffix}`, {
+      return await this.fetchImpl(`${this.baseUrl}${path}${suffix}`, {
         headers: this.signedHeaders(path, query),
       });
     } catch (cause) {
       throw new OpenBBGatewayError('OpenBB gateway could not be reached.', null, cause);
     }
-    if (!response.ok) {
-      throw new OpenBBGatewayError(`OpenBB gateway returned HTTP ${response.status}.`, response.status);
-    }
+  }
+
+  async get<T>(path: string, params: URLSearchParams = new URLSearchParams()): Promise<T> {
+    if (!this.isConfigured()) throw new OpenBBGatewayError('OpenBB gateway is not configured.');
+    const query = params.toString();
+    const suffix = query ? `?${query}` : '';
+
+    await acquireOpenBBSlot();
     try {
-      return (await response.json()) as T;
-    } catch (cause) {
-      throw new OpenBBGatewayError('OpenBB gateway returned invalid JSON.', response.status, cause);
+      let response = await this.fetchOnce(path, query, suffix);
+      if (!response.ok && RETRYABLE_STATUS.has(response.status)) {
+        await wait(350 + Math.floor(Math.random() * 250));
+        response = await this.fetchOnce(path, query, suffix);
+      }
+      if (!response.ok) {
+        throw new OpenBBGatewayError(`OpenBB gateway returned HTTP ${response.status}.`, response.status);
+      }
+      try {
+        return (await response.json()) as T;
+      } catch (cause) {
+        throw new OpenBBGatewayError('OpenBB gateway returned invalid JSON.', response.status, cause);
+      }
+    } finally {
+      releaseOpenBBSlot();
     }
   }
 }
