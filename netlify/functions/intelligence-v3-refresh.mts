@@ -38,7 +38,7 @@ export default async () => {
     freshnessPolicy: { freshForMs: HOUR, staleUsableForMs: 14 * DAY },
     payload: {
       advancedEvidenceV3: fabric,
-      cashYieldBenchmark,
+      cashYieldBenchmark: cashBenchmark,
     },
     usable: usableLaneCount > 0 || Boolean(cashBenchmark.event),
     containsMockData: false,
