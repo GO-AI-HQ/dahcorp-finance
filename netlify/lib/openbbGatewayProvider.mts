@@ -63,6 +63,10 @@ function dateDaysBefore(asOf: string, days: number): string {
   return end.toISOString().slice(0, 10);
 }
 
+function safeProviderMessage(error: unknown): string {
+  return error instanceof Error && error.message ? error.message.slice(0, 160) : 'provider request failed';
+}
+
 function inferredFrequency(dates: string[]): DistributionFrequency {
   if (dates.length < 2) return 'irregular';
   const sorted = [...dates].sort();
@@ -97,6 +101,7 @@ export class OpenBBGatewayMarketDataProvider implements MarketDataProvider {
     'OpenBB market evidence is retrieved through the DAHCorp signed Google Cloud gateway using the yfinance provider.',
     'OpenBB/yfinance dividend history supplies ex-dividend date and cash amount but not verified payment date or tax character; payment date is represented by ex-date for model timing and ROC remains UNKNOWN.',
     'OpenBB/yfinance data is treated as delayed market evidence, not exchange-native execution pricing.',
+    'History and distributions are collected per symbol so one unsupported ticker cannot erase valid evidence for the rest of the portfolio.',
   ];
 
   private readonly baseUrl: string;
@@ -195,20 +200,25 @@ export class OpenBBGatewayMarketDataProvider implements MarketDataProvider {
     const normalized = normalizeSymbols(symbols);
     const startDate = dateDaysBefore(asOf, Math.max(days * 2, days + 30));
     const entries = await Promise.all(normalized.map(async (symbol) => {
-      const payload = await this.get<OpenBBHistoryRow>('/v1/history', new URLSearchParams({
-        symbol,
-        start_date: startDate,
-        end_date: asOf,
-      }));
-      const bars = (payload.results ?? [])
-        .map((row) => {
-          const close = finite(row.close);
-          const date = typeof row.date === 'string' ? row.date.slice(0, 10) : '';
-          return close != null && close > 0 && /^\d{4}-\d{2}-\d{2}$/.test(date) ? { date, close } : null;
-        })
-        .filter((bar): bar is PriceBar => bar != null)
-        .sort((a, b) => a.date.localeCompare(b.date));
-      return [symbol, bars.slice(-Math.max(days, 60))] as const;
+      try {
+        const payload = await this.get<OpenBBHistoryRow>('/v1/history', new URLSearchParams({
+          symbol,
+          start_date: startDate,
+          end_date: asOf,
+        }));
+        const bars = (payload.results ?? [])
+          .map((row) => {
+            const close = finite(row.close);
+            const date = typeof row.date === 'string' ? row.date.slice(0, 10) : '';
+            return close != null && close > 0 && /^\d{4}-\d{2}-\d{2}$/.test(date) ? { date, close } : null;
+          })
+          .filter((bar): bar is PriceBar => bar != null)
+          .sort((a, b) => a.date.localeCompare(b.date));
+        return [symbol, bars.slice(-Math.max(days, 60))] as const;
+      } catch (error) {
+        console.warn(`[dahcorp] OpenBB price history unavailable for ${symbol}: ${safeProviderMessage(error)}`);
+        return [symbol, []] as const;
+      }
     }));
     return Object.fromEntries(entries);
   }
@@ -217,12 +227,17 @@ export class OpenBBGatewayMarketDataProvider implements MarketDataProvider {
     const normalized = normalizeSymbols(symbols);
     const startDate = dateDaysBefore(asOf, days);
     const rows = await Promise.all(normalized.map(async (symbol) => {
-      const payload = await this.get<OpenBBDividendRow>('/v1/dividends', new URLSearchParams({
-        symbol,
-        start_date: startDate,
-        end_date: asOf,
-      }));
-      return (payload.results ?? []).map((row) => ({ symbol, row }));
+      try {
+        const payload = await this.get<OpenBBDividendRow>('/v1/dividends', new URLSearchParams({
+          symbol,
+          start_date: startDate,
+          end_date: asOf,
+        }));
+        return (payload.results ?? []).map((row) => ({ symbol, row }));
+      } catch (error) {
+        console.warn(`[dahcorp] OpenBB distribution history unavailable for ${symbol}: ${safeProviderMessage(error)}`);
+        return [] as Array<{ symbol: string; row: OpenBBDividendRow }>;
+      }
     }));
 
     const flat = rows.flat();
