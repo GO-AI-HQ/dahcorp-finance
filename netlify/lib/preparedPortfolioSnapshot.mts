@@ -1,13 +1,22 @@
 import type { PortfolioSnapshot } from '../../src/core/types.js';
 import type { StrategyConfig } from '../../src/core/config.js';
 import type { BrokerStatus } from '../../src/brokers/registry.js';
+import type { MarketDataProvider } from '../../src/market/provider.js';
 import { buildAnalysisContext, type AnalysisContext } from '../../src/services/analysis.js';
+import { buildPortfolioSnapshot } from '../../src/services/snapshot.js';
 import { createDataPlaneSnapshot, type DataPlaneProviderId, type SnapshotFreshness } from '../../src/data/dataPlane.js';
-import { buildServerContext } from './context.mts';
+import {
+  applyExternalLiquiditySemantics,
+  buildBrokerStateBasis,
+  buildLiveMarketProviderForSource,
+  type BrokerStateBasis,
+} from './context.mts';
 import { loadDataPlaneSnapshot, saveDataPlaneSnapshot } from './dataPlaneSnapshotStore.mts';
-import { loadPreparedMarketPayload } from './preparedMarketSnapshot.mts';
+import { loadPreparedMarketPayload, loadPreparedMarketProvider } from './preparedMarketSnapshot.mts';
 
 const HOUR = 60 * 60_000;
+
+export type PreparedPortfolioMarketReadMode = 'prepared_market' | 'live_market_bootstrap_fallback';
 
 export interface PreparedPortfolioPayload {
   version: 'portfolio-v1';
@@ -17,6 +26,7 @@ export interface PreparedPortfolioPayload {
   configNote: string | null;
   brokers: BrokerStatus[];
   builtAt: string;
+  marketReadMode?: PreparedPortfolioMarketReadMode;
 }
 
 export interface PreparedAnalysisContext extends AnalysisContext {
@@ -25,6 +35,7 @@ export interface PreparedAnalysisContext extends AnalysisContext {
   brokers: BrokerStatus[];
   preparedAt: string;
   preparedFreshness: SnapshotFreshness;
+  preparedMarketReadMode: PreparedPortfolioMarketReadMode | 'unknown_legacy';
 }
 
 function isPreparedPortfolioPayload(value: unknown): value is PreparedPortfolioPayload {
@@ -34,48 +45,69 @@ function isPreparedPortfolioPayload(value: unknown): value is PreparedPortfolioP
     && typeof row.builtAt === 'string'
     && Boolean(row.snapshot)
     && Boolean(row.config)
-    && Array.isArray(row.brokers);
+    && Array.isArray(row.brokers)
+    && (row.marketReadMode == null || row.marketReadMode === 'prepared_market' || row.marketReadMode === 'live_market_bootstrap_fallback');
 }
 
-function providersForContext(ctx: Awaited<ReturnType<typeof buildServerContext>>): DataPlaneProviderId[] {
+function addProviderFromId(providers: Set<DataPlaneProviderId>, raw: string): void {
+  const id = raw.toLowerCase();
+  if (id.includes('schwab')) providers.add('schwab');
+  if (id.includes('robinhood')) providers.add('robinhood');
+  if (id.includes('openbb')) providers.add('openbb');
+  if (id.includes('fmp')) providers.add('fmp');
+}
+
+function providersForBasis(basis: BrokerStateBasis, liveFallbackProvider: MarketDataProvider | null): DataPlaneProviderId[] {
   const providers = new Set<DataPlaneProviderId>();
-  for (const account of ctx.snapshot.accounts) {
+  for (const account of basis.source.accounts) {
     if (account.broker === 'schwab') providers.add('schwab');
     if (account.broker === 'robinhood') providers.add('robinhood');
     if (account.broker === 'manual') providers.add('manual');
   }
-  const providerId = ctx.provider.id.toLowerCase();
-  if (providerId.includes('schwab')) providers.add('schwab');
-  if (providerId.includes('openbb')) providers.add('openbb');
-  if (providerId.includes('fmp')) providers.add('fmp');
+  // Prepared market evidence is independently attributed in the Market
+  // Snapshot. Only add a market provider here when this refresh had to use the
+  // explicit live bootstrap fallback because no usable Market Snapshot existed.
+  if (liveFallbackProvider) addProviderFromId(providers, liveFallbackProvider.id);
   return [...providers];
 }
 
 /**
- * Build the complete expensive portfolio/market analysis basis once in a
- * background refresh and atomically persist it. Interactive consumers read this
- * prepared state; the independently refreshed Market Snapshot is overlaid at
- * read time so quote/history/distribution cadence is no longer tied to page
- * navigation or to the broker snapshot cadence.
+ * Refresh the broker/account basis once per hour and compose it with the latest
+ * independently prepared market evidence. In the normal path this function
+ * makes broker/account calls only; quote/history/distribution provider calls
+ * remain owned by their dedicated market refresh tiers.
+ *
+ * A live market provider is used only as a cold-start/bootstrap fallback when
+ * no usable Prepared Market Snapshot exists yet.
  */
 export async function refreshPreparedPortfolioSnapshot(): Promise<{
   payload: PreparedPortfolioPayload;
   persisted: boolean;
 }> {
-  const ctx = await buildServerContext();
+  const basis = await buildBrokerStateBasis();
+  const preparedProvider = await loadPreparedMarketProvider();
+  const liveFallbackProvider = preparedProvider
+    ? null
+    : buildLiveMarketProviderForSource(basis.adapters, basis.config, basis.source);
+  const provider = preparedProvider ?? liveFallbackProvider!;
+  const marketReadMode: PreparedPortfolioMarketReadMode = preparedProvider
+    ? 'prepared_market'
+    : 'live_market_bootstrap_fallback';
+  const snapshot = await buildPortfolioSnapshot({ asOf: basis.asOf, provider, source: basis.source });
   const builtAt = new Date().toISOString();
   const payload: PreparedPortfolioPayload = {
     version: 'portfolio-v1',
-    snapshot: ctx.snapshot,
-    config: ctx.config,
-    configPersisted: ctx.configPersisted,
-    configNote: ctx.configNote,
-    brokers: ctx.brokers,
+    snapshot,
+    config: basis.config,
+    configPersisted: basis.configPersisted,
+    configNote: basis.configNote,
+    brokers: basis.brokers,
     builtAt,
+    marketReadMode,
   };
 
-  const providers = providersForContext(ctx);
-  const hasPortfolioState = ctx.snapshot.accounts.length > 0 && ctx.snapshot.holdings.length > 0;
+  const providers = providersForBasis(basis, liveFallbackProvider);
+  const hasPortfolioState = snapshot.accounts.length > 0 && snapshot.holdings.length > 0;
   const persisted = await saveDataPlaneSnapshot(createDataPlaneSnapshot({
     domain: 'portfolio',
     observedAt: builtAt,
@@ -87,13 +119,16 @@ export async function refreshPreparedPortfolioSnapshot(): Promise<{
     // per-family freshness rules and is overlaid when this snapshot is read.
     freshnessPolicy: { freshForMs: 75 * 60_000, staleUsableForMs: 6 * HOUR },
     payload,
-    usable: hasPortfolioState && !ctx.snapshot.containsMockData,
-    containsMockData: ctx.snapshot.containsMockData,
+    usable: hasPortfolioState && !snapshot.containsMockData,
+    containsMockData: snapshot.containsMockData,
     notes: [
       'Prepared Portfolio Snapshot is a display/analysis basis, not execution state.',
+      marketReadMode === 'prepared_market'
+        ? 'Broker/account state was composed with the Prepared Market Snapshot; this hourly portfolio refresh made no market-provider calls.'
+        : 'No usable Prepared Market Snapshot existed, so this refresh used the controlled live market bootstrap fallback.',
       'Market evidence may be replaced at read time by the independently refreshed Market Snapshot.',
       'A future order must revalidate broker cash, holdings, quote and deterministic risk immediately before submission.',
-      ...ctx.snapshot.sourceNotes,
+      ...snapshot.sourceNotes,
     ],
   }));
 
@@ -143,7 +178,7 @@ export async function loadPreparedAnalysisContext(now: Date = new Date()): Promi
       ...(marketRetained ? ['Prepared market composition is retained last-known-good; each included symbol still satisfies its own evidence-family stale-usable policy.'] : []),
     ])],
   };
-  const analysis = buildAnalysisContext(snapshot, payload.config);
+  const analysis = applyExternalLiquiditySemantics(buildAnalysisContext(snapshot, payload.config), payload.config);
 
   return {
     ...analysis,
@@ -152,5 +187,6 @@ export async function loadPreparedAnalysisContext(now: Date = new Date()): Promi
     brokers: payload.brokers,
     preparedAt: loaded.snapshot.observedAt,
     preparedFreshness: loaded.freshness,
+    preparedMarketReadMode: payload.marketReadMode ?? 'unknown_legacy',
   };
 }
