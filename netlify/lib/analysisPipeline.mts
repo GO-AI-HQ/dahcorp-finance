@@ -1,8 +1,12 @@
 import { buildServerContext } from './context.mts';
+import { loadPreparedAnalysisContext } from './preparedPortfolioSnapshot.mts';
+import { loadPreparedMarketPayload } from './preparedMarketSnapshot.mts';
+import { loadPreparedIntelligenceSnapshot } from './preparedIntelligenceSnapshot.mts';
 import { buildPlan, buildSignalsPayload, investableCapital } from '../../src/services/analysis.js';
 import { buildAgentDigest } from '../../src/agent/digest.js';
 import { buildDeterministicBrief } from '../../src/agent/fallback.js';
 import type { AgentResult } from '../../src/agent/types.js';
+import type { ModelDataProvenance } from '../../src/agent/provenance.js';
 import { validateAllocation, validateOrders } from '../../src/risk/engine.js';
 import { getInstrumentOrFallback } from '../../src/core/universe.js';
 import { recordAudit, saveRecommendation } from './store.mts';
@@ -13,16 +17,24 @@ import { loadStableAdvancedEvidenceFabric } from './intelligenceV3Stable.mts';
 import { compactAdvancedEvidence } from './intelligenceContext.mts';
 import { buildStrategyMutationProposals, loadIncomeIntelligence } from './incomeIntelligence.mts';
 
+function uniqueDistributionSymbols(rows: { symbol: string }[]): number {
+  return new Set(rows.map((row) => row.symbol.toUpperCase())).size;
+}
+
 export async function prepareAnalysis(question: string, requestedCapital?: number) {
-  // Read the latest stored research in parallel with the portfolio. Provider
-  // refreshes happen separately so a user question does not wait on dozens of
-  // outside data calls before the strategist can begin.
-  const [ctx, intelligence, advanced, incomeResearch] = await Promise.all([
-    buildServerContext(),
+  // Model analysis follows the same snapshot-first plane as Portfolio, Income
+  // and Strategy Lab. Stored research is loaded in parallel; no provider refresh
+  // is triggered by a user question. Live broker/market context exists only as
+  // the explicit cold-start fallback when no usable prepared portfolio exists.
+  const [preparedCtx, intelligence, preparedMarket, preparedIntelligence, incomeResearch] = await Promise.all([
+    loadPreparedAnalysisContext(),
     buildMarketIntelligencePayload({ refresh: false, limit: 100 }),
-    loadStableAdvancedEvidenceFabric(),
+    loadPreparedMarketPayload(),
+    loadPreparedIntelligenceSnapshot(),
     loadIncomeIntelligence(),
   ]);
+  const ctx = preparedCtx ?? await buildServerContext();
+  const advanced = preparedIntelligence?.payload.advancedEvidenceV3 ?? await loadStableAdvancedEvidenceFabric();
   const signals = buildSignalsPayload(ctx);
   const policyCapital = investableCapital(ctx);
   const requested = typeof requestedCapital === 'number' && Number.isFinite(requestedCapital) ? requestedCapital : policyCapital;
@@ -45,9 +57,63 @@ export async function prepareAnalysis(question: string, requestedCapital?: numbe
     question,
   });
 
+  const preparedMode = Boolean(preparedCtx);
+  const marketEvidence = preparedMarket?.payload.evidence;
+  const retainedEvidenceCount = marketEvidence
+    ? [...marketEvidence.quotes, ...marketEvidence.history, ...marketEvidence.distributions].filter((row) => row.retained).length
+    : 0;
+  const dataProvenance: ModelDataProvenance = {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    preparation: {
+      readMode: preparedMode ? 'prepared_snapshot' : 'live_cold_start_fallback',
+      providerCallsDuringPreparation: preparedMode ? 'none' : 'cold_start_broker_and_market_fallback',
+    },
+    portfolio: {
+      asOf: ctx.snapshot.asOf,
+      preparedAt: preparedCtx?.preparedAt ?? null,
+      freshness: preparedCtx?.preparedFreshness ?? null,
+      dataQuality: ctx.snapshot.dataQuality,
+      containsMockData: ctx.snapshot.containsMockData,
+      marketReadMode: preparedCtx?.preparedMarketReadMode ?? 'live_cold_start_fallback',
+    },
+    market: {
+      source: !preparedMode
+        ? 'live_cold_start_fallback'
+        : preparedMarket
+          ? 'prepared_market_snapshot'
+          : 'portfolio_snapshot_embedded',
+      builtAt: preparedMarket?.payload.builtAt ?? null,
+      freshness: preparedMarket?.freshness ?? null,
+      quoteSymbolCount: preparedMarket ? Object.keys(preparedMarket.payload.quotes).length : Object.keys(ctx.snapshot.quotes).length,
+      historySymbolCount: preparedMarket ? Object.keys(preparedMarket.payload.priceHistory).length : Object.keys(ctx.snapshot.priceHistory).length,
+      distributionSymbolCount: preparedMarket
+        ? preparedMarket.payload.evidence.distributions.length
+        : uniqueDistributionSymbols(ctx.snapshot.distributions),
+      retainedEvidenceCount,
+    },
+    intelligence: {
+      source: preparedIntelligence ? 'prepared_intelligence_snapshot' : 'stable_evidence_ledger_fallback',
+      builtAt: preparedIntelligence?.payload.builtAt ?? null,
+      freshness: preparedIntelligence?.freshness ?? null,
+      coveragePct: advanced.fusion.coveragePct,
+      liveLaneCount: advanced.fusion.liveLaneCount,
+      partialLaneCount: advanced.fusion.partialLaneCount,
+      unavailableLaneCount: advanced.fusion.unavailableLaneCount,
+      expandedFinnhubCompanyCount: preparedIntelligence?.payload.finnhubExpandedEarnings.evidence.length ?? null,
+    },
+    constraints: [
+      'Prepared and retained evidence supports display, research and planning only; it is not execution state or execution pricing.',
+      'Missing or expired evidence remains UNKNOWN and must not be converted to zero or fabricated values.',
+      'Model output cannot expand account mandates, trading allowlists, risk ceilings or spending authority.',
+      'Any future order must revalidate live broker cash, holdings, an execution-authoritative quote and deterministic risk immediately before submission.',
+    ],
+  };
+
   // Keep the model packet compact. The full event ledger and raw source
   // snapshots stay stored server-side; OpenAI/Claude receive decision-relevant
-  // summaries, current coverage and provenance rather than a giant raw dump.
+  // summaries plus an explicit provenance envelope describing freshness and
+  // snapshot lineage.
   const eventIntelligence = {
     asOf: intelligence.asOf,
     providers: intelligence.providers,
@@ -72,7 +138,7 @@ export async function prepareAnalysis(question: string, requestedCapital?: numbe
     note: intelligence.note,
   };
 
-  return { ctx, signals, capital, plan, digest, deterministicBrief, eventIntelligence };
+  return { ctx, signals, capital, plan, digest, deterministicBrief, eventIntelligence, dataProvenance };
 }
 
 export type PreparedAnalysis = Awaited<ReturnType<typeof prepareAnalysis>>;
@@ -84,6 +150,7 @@ export function agentRequestFor(question: string, prepared: PreparedAnalysis): A
     capital: prepared.capital,
     config: prepared.ctx.config,
     eventIntelligence: prepared.eventIntelligence,
+    dataProvenance: prepared.dataProvenance,
     deterministicBrief: prepared.deterministicBrief,
   };
 }
@@ -94,7 +161,7 @@ export async function finalizePreparedAnalysis(
   agent: AgentResult,
   modelInputAsOf = prepared.ctx.snapshot.asOf,
 ) {
-  const { ctx, signals, capital, plan, digest } = prepared;
+  const { ctx, signals, capital, plan, digest, dataProvenance } = prepared;
   const riskContext = {
     asOf: ctx.snapshot.asOf,
     analysis: ctx.analysis,
@@ -148,6 +215,7 @@ export async function finalizePreparedAnalysis(
       baselineDecision,
       modelInputAsOf,
       riskSnapshotAsOf: ctx.snapshot.asOf,
+      dataProvenance,
     },
   });
 
@@ -169,6 +237,11 @@ export async function finalizePreparedAnalysis(
       model: agent.model,
       modelInputAsOf,
       riskSnapshotAsOf: ctx.snapshot.asOf,
+      modelDataReadMode: dataProvenance.preparation.readMode,
+      portfolioPreparedAt: dataProvenance.portfolio.preparedAt,
+      portfolioFreshness: dataProvenance.portfolio.freshness,
+      marketFreshness: dataProvenance.market.freshness,
+      intelligenceFreshness: dataProvenance.intelligence.freshness,
       riskApproved: riskDecision.approved,
       blockedCodes: riskDecision.orders
         .flatMap((o) => o.findings)
@@ -183,6 +256,7 @@ export async function finalizePreparedAnalysis(
     modelInputAsOf,
     containsMockData: ctx.snapshot.containsMockData,
     sourceNotes: ctx.snapshot.sourceNotes,
+    dataProvenance,
     recommendationId,
     question,
     capital,
