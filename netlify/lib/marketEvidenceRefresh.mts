@@ -5,6 +5,7 @@ import { loadPositionSource, loadStrategyConfig } from './store.mts';
 import { applyAccountMandates, selectMarketProvider, todayISO } from './context.mts';
 import { loadSchwabRefreshToken, saveSchwabRefreshToken } from './schwabTokens.mts';
 import { getFmpDistributions } from './fmpDistributionProvider.mts';
+import { persistStableDistributionEvidence } from './stableDistributionEvidence.mts';
 import { saveMarketEvidence } from './marketEvidenceStore.mts';
 import { rebuildPreparedMarketSnapshot } from './preparedMarketSnapshot.mts';
 
@@ -24,9 +25,6 @@ async function buildMarketRefreshBasis(asOf = todayISO()) {
     loadPositionSource(asOf),
   ]);
   const fallback = (broker: 'robinhood' | 'schwab') => fallbackFromSource(storedSource, broker);
-  // Market refreshes need quote-capable adapter construction but deliberately do
-  // not authenticate/read broker account state. Holdings/cash refresh remains a
-  // separate Portfolio Snapshot concern.
   const adapters = buildBrokerRegistry(process.env as Record<string, string | undefined>, fallback, {
     robinhoodGateway: null,
     schwabTokenStore: { loadRefreshToken: loadSchwabRefreshToken, saveRefreshToken: saveSchwabRefreshToken },
@@ -89,11 +87,10 @@ export async function refreshDistributionEvidence(): Promise<{
   const { asOf, source, provider } = await buildMarketRefreshBasis();
   const symbols = distributionSymbols(source.holdings);
 
-  // This is the scheduled network-owning path for FMP. Warming its persistent
-  // cache first allows the normal composite provider to use FMP where verified
-  // and OpenBB only for symbols that still need fallback evidence.
-  const fmp = await getFmpDistributions(symbols, asOf, HISTORY_DAYS, { allowNetwork: true });
+  const fmp = await getFmpDistributions(symbols, asOf, HISTORY_DAYS, { forceRefresh: true, allowNetwork: true });
   const events = await provider.getDistributions(symbols, asOf, HISTORY_DAYS);
+  if (events.length) await persistStableDistributionEvidence(events, 'scheduled market distribution refresh');
+
   const bySymbol = new Map<string, typeof events>();
   for (const event of events) {
     const symbol = event.symbol.toUpperCase();
