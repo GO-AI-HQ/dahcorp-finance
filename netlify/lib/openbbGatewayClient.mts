@@ -22,13 +22,18 @@ async function acquireOpenBBSlot(): Promise<void> {
     activeOpenBBRequests += 1;
     return;
   }
+  // The active slot is transferred directly by releaseOpenBBSlot, so a queued
+  // waiter does not increment the count again when it resumes.
   await new Promise<void>((resolve) => openBBWaiters.push(resolve));
-  activeOpenBBRequests += 1;
 }
 
 function releaseOpenBBSlot(): void {
+  const next = openBBWaiters.shift();
+  if (next) {
+    next();
+    return;
+  }
   activeOpenBBRequests = Math.max(0, activeOpenBBRequests - 1);
-  openBBWaiters.shift()?.();
 }
 
 function wait(ms: number): Promise<void> {
