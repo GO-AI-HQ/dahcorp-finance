@@ -24,6 +24,7 @@ import { loadSchwabRefreshToken, saveSchwabRefreshToken } from './schwabTokens.m
 import { createRobinhoodGateway } from './robinhoodMcp.mts';
 import { SchwabHybridMarketDataProvider } from './schwabMarketProvider.mts';
 import { OpenBBGatewayMarketDataProvider, SchwabOpenBBMarketDataProvider } from './openbbGatewayProvider.mts';
+import { resolveOpenBBSigningKeyValue } from './openbbGatewayClient.mts';
 import type { SchwabAdapter } from '../../src/brokers/schwab/adapter.js';
 
 export function todayISO(now = new Date()): string {
@@ -223,7 +224,13 @@ export function selectMarketProvider(
   const schwab = adapters.find(
     (adapter): adapter is SchwabAdapter => adapter.id === 'schwab' && adapter.isConfigured() && adapter.capabilities.includes('read_quotes'),
   );
-  const openbb = new OpenBBGatewayMarketDataProvider(env);
+  const openbbEnv: NodeJS.ProcessEnv = {
+    ...env,
+    OPENBB_GATEWAY_URL: runtimeEnv('OPENBB_GATEWAY_URL', env),
+    OPENBB_GATEWAY_SIGNING_KEY: resolveOpenBBSigningKeyValue(env),
+    OPENBB_MARKET_PROVIDER: runtimeEnv('OPENBB_MARKET_PROVIDER', env),
+  };
+  const openbb = new OpenBBGatewayMarketDataProvider(openbbEnv);
 
   const historySymbols = [
     ...new Set([
@@ -239,7 +246,7 @@ export function selectMarketProvider(
 
   if (openbb.isConfigured()) {
     return schwab
-      ? new SchwabOpenBBMarketDataProvider(schwab, openbb, env, historySymbols)
+      ? new SchwabOpenBBMarketDataProvider(schwab, openbb, openbbEnv, historySymbols)
       : openbb;
   }
   if (schwab) {
