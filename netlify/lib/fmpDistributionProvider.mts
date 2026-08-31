@@ -2,11 +2,11 @@ import type { DistributionEvent, PriceBar, Quote } from '../../src/core/types.js
 import type { MarketDataProvider } from '../../src/market/provider.js';
 import { normalizeFmpDividendRows, type FmpDividendRow } from '../../src/market/fmpDistributions.js';
 import type { IntelligenceEvent } from '../../src/intelligence/types.js';
-import { persistIntelligenceEvents, recentIntelligenceEvents } from './intelligenceStore.mts';
+import { intelligenceEventsByPurpose, persistIntelligenceEvents } from './intelligenceStore.mts';
 
 const FMP_BASE_URL = 'https://financialmodelingprep.com/stable';
-const CACHE_PURPOSE = 'fmp_distribution_snapshot';
-const CACHE_MAX_AGE_HOURS = 12;
+export const FMP_DISTRIBUTION_CACHE_PURPOSE = 'fmp_distribution_snapshot';
+const CACHE_MAX_AGE_HOURS = 24;
 const MAX_ROWS_PER_SYMBOL = 100;
 
 type RuntimeEnv = Record<string, string | undefined>;
@@ -41,24 +41,24 @@ async function fingerprint(parts: string[]): Promise<string> {
   return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-interface StoredSnapshot {
+export interface StoredFmpSnapshot {
   symbol: string;
   fetchedAt: string;
   rows: FmpDividendRow[];
 }
 
-function snapshotFromEvent(event: IntelligenceEvent): StoredSnapshot | null {
-  if (event.metadata?.purpose !== CACHE_PURPOSE) return null;
+function snapshotFromEvent(event: IntelligenceEvent): StoredFmpSnapshot | null {
+  if (event.metadata?.purpose !== FMP_DISTRIBUTION_CACHE_PURPOSE) return null;
   const symbol = typeof event.metadata.symbol === 'string' ? event.metadata.symbol.toUpperCase() : '';
   const fetchedAt = typeof event.metadata.fetchedAt === 'string' ? event.metadata.fetchedAt : event.discoveredAt;
   const rows = validFmpRows(event.metadata.rows);
   return symbol && Number.isFinite(Date.parse(fetchedAt)) ? { symbol, fetchedAt, rows } : null;
 }
 
-async function storedSnapshots(symbols: string[]): Promise<Map<string, StoredSnapshot>> {
+export async function storedFmpSnapshots(symbols: string[]): Promise<Map<string, StoredFmpSnapshot>> {
   const wanted = new Set(normalizeSymbols(symbols));
-  const out = new Map<string, StoredSnapshot>();
-  for (const event of await recentIntelligenceEvents(500)) {
+  const out = new Map<string, StoredFmpSnapshot>();
+  for (const event of await intelligenceEventsByPurpose(FMP_DISTRIBUTION_CACHE_PURPOSE, 200)) {
     const snapshot = snapshotFromEvent(event);
     if (!snapshot || !wanted.has(snapshot.symbol) || out.has(snapshot.symbol)) continue;
     out.set(snapshot.symbol, snapshot);
@@ -66,7 +66,7 @@ async function storedSnapshots(symbols: string[]): Promise<Map<string, StoredSna
   return out;
 }
 
-function isFresh(snapshot: StoredSnapshot, now = Date.now()): boolean {
+function isFresh(snapshot: StoredFmpSnapshot, now = Date.now()): boolean {
   const ageMs = now - Date.parse(snapshot.fetchedAt);
   return Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= CACHE_MAX_AGE_HOURS * 3_600_000;
 }
@@ -84,6 +84,13 @@ export interface FmpDistributionResult {
   callsUsed: number;
 }
 
+export class FmpProviderError extends Error {
+  constructor(message: string, readonly status: number | null = null) {
+    super(message);
+    this.name = 'FmpProviderError';
+  }
+}
+
 export class FmpDistributionClient {
   readonly id = 'fmp-distributions';
   private readonly apiKey: string;
@@ -97,7 +104,7 @@ export class FmpDistributionClient {
   }
 
   async fetchCompanyDividends(symbol: string): Promise<FmpDividendRow[]> {
-    if (!this.isConfigured()) throw new Error('FMP dividend data is not configured.');
+    if (!this.isConfigured()) throw new FmpProviderError('FMP dividend data is not configured.');
     const params = new URLSearchParams({
       symbol: symbol.toUpperCase(),
       limit: String(MAX_ROWS_PER_SYMBOL),
@@ -106,7 +113,12 @@ export class FmpDistributionClient {
     const response = await this.fetchImpl(`${FMP_BASE_URL}/dividends?${params.toString()}`, {
       headers: { Accept: 'application/json' },
     });
-    if (!response.ok) throw new Error(`FMP returned HTTP ${response.status}.`);
+    if (!response.ok) {
+      const message = response.status === 429
+        ? 'FMP returned HTTP 429. The provider is rate-limiting requests, so DAHCorp will stop asking FMP again in this request and use stored/OpenBB evidence instead.'
+        : `FMP returned HTTP ${response.status}.`;
+      throw new FmpProviderError(message, response.status);
+    }
     return validFmpRows(await response.json());
   }
 }
@@ -131,7 +143,7 @@ async function persistSnapshot(symbol: string, rows: FmpDividendRow[], fetchedAt
     severity: 'info',
     sentimentScore: null,
     metadata: {
-      purpose: CACHE_PURPOSE,
+      purpose: FMP_DISTRIBUTION_CACHE_PURPOSE,
       symbol,
       fetchedAt,
       rows: rows.slice(0, MAX_ROWS_PER_SYMBOL),
@@ -143,18 +155,20 @@ async function persistSnapshot(symbol: string, rows: FmpDividendRow[], fetchedAt
 }
 
 /**
- * Get FMP distribution history with a persistent 12-hour cache. Dividend
- * declarations are low-frequency evidence, so this deliberately avoids burning
- * the 250-call/day personal quota on normal page navigation.
+ * Get FMP distribution history with a persistent one-day cache. Dividend
+ * declarations are low-frequency evidence, so normal page navigation should
+ * almost always reuse a stored snapshot. A single HTTP 429 opens a circuit
+ * breaker for the rest of this request instead of repeatedly hammering FMP.
  */
 export async function getFmpDistributions(
   symbols: string[],
   asOf: string,
   days: number,
-  options: { forceRefresh?: boolean; env?: RuntimeEnv; fetchImpl?: typeof fetch } = {},
+  options: { forceRefresh?: boolean; allowNetwork?: boolean; env?: RuntimeEnv; fetchImpl?: typeof fetch } = {},
 ): Promise<FmpDistributionResult> {
   const normalized = normalizeSymbols(symbols);
   const client = new FmpDistributionClient(options.env, options.fetchImpl ?? fetch);
+  const allowNetwork = options.allowNetwork !== false;
   if (!client.isConfigured()) {
     return {
       events: [],
@@ -163,10 +177,11 @@ export async function getFmpDistributions(
     };
   }
 
-  const cached = await storedSnapshots(normalized);
+  const cached = await storedFmpSnapshots(normalized);
   const allEvents: DistributionEvent[] = [];
   const statuses: FmpSymbolStatus[] = [];
   let callsUsed = 0;
+  let rateLimited = false;
 
   for (const symbol of normalized) {
     const stored = cached.get(symbol);
@@ -174,6 +189,31 @@ export async function getFmpDistributions(
       const events = normalizeFmpDividendRows(stored.rows, symbol, asOf, days);
       allEvents.push(...events);
       statuses.push({ symbol, source: 'cache', rows: events.length, note: `Verified FMP snapshot cached at ${stored.fetchedAt}.` });
+      continue;
+    }
+
+    if (!allowNetwork || rateLimited) {
+      if (stored) {
+        const events = normalizeFmpDividendRows(stored.rows, symbol, asOf, days).map((row) => ({ ...row, dataQuality: 'stale' as const }));
+        allEvents.push(...events);
+        statuses.push({
+          symbol,
+          source: 'cache',
+          rows: events.length,
+          note: allowNetwork
+            ? 'FMP rate-limited this batch; using the last stored snapshot.'
+            : 'Using the stored FMP snapshot without making a provider call.',
+        });
+      } else {
+        statuses.push({
+          symbol,
+          source: 'fallback',
+          rows: 0,
+          note: allowNetwork
+            ? 'FMP rate-limited this batch and no stored snapshot is available; use the OpenBB fallback.'
+            : 'No stored FMP snapshot is available; use the OpenBB fallback.',
+        });
+      }
       continue;
     }
 
@@ -186,7 +226,8 @@ export async function getFmpDistributions(
       allEvents.push(...events);
       statuses.push({ symbol, source: 'fmp', rows: events.length, note: `FMP returned ${rows.length} company-dividend record${rows.length === 1 ? '' : 's'}.` });
     } catch (error) {
-      // If today's provider call fails, a recently stored snapshot is safer than
+      if (error instanceof FmpProviderError && error.status === 429) rateLimited = true;
+      // If today's provider call fails, a stored snapshot is safer than
       // inventing data. The wrapper can still ask OpenBB for this symbol.
       if (stored) {
         const events = normalizeFmpDividendRows(stored.rows, symbol, asOf, days).map((row) => ({ ...row, dataQuality: 'stale' as const }));
@@ -221,7 +262,7 @@ export class FmpPreferredMarketDataProvider implements MarketDataProvider {
     this.sourceNotes = [
       ...(base.sourceNotes ?? []),
       'Financial Modeling Prep is the preferred distribution-history source. It supplies declared cash amounts and, when available, actual payment dates for income modeling.',
-      'FMP distribution evidence is cached for 12 hours to stay within the personal-use API quota; normal page navigation does not repeatedly call FMP.',
+      'FMP distribution evidence is cached for 24 hours. Normal page navigation reuses the last verified snapshot rather than repeatedly consuming provider calls.',
       'DAHCorp does not trust a provider headline yield as an annualized return. Trailing and modeled rates are calculated from actual distributions and current prices.',
       'Return-of-capital and tax character remain UNKNOWN unless verified by issuer tax or Section 19a evidence.',
     ];
