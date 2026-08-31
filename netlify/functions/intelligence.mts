@@ -1,6 +1,7 @@
 import { json, methodNotAllowed, withErrorHandling } from '../lib/http.mts';
 import { requireSession } from '../lib/session.mts';
 import { buildMarketIntelligencePayload } from '../lib/intelligenceEngine.mts';
+import { SignedOpenBBGatewayClient } from '../lib/openbbGatewayClient.mts';
 import type { IntelligencePayload } from '../../src/intelligence/types.js';
 
 function runtimeEnv(key: string): string | undefined {
@@ -23,7 +24,7 @@ function runtimeEnv(key: string): string | undefined {
  */
 function repairConfigurationLabels(payload: IntelligencePayload): IntelligencePayload {
   const configured = {
-    openbb: Boolean(runtimeEnv('OPENBB_GATEWAY_URL') && runtimeEnv('OPENBB_GATEWAY_SIGNING_KEY')),
+    openbb: new SignedOpenBBGatewayClient().isConfigured(),
     finnhub: Boolean(runtimeEnv('FINNHUB_API_KEY')),
     ainvest: Boolean(runtimeEnv('AINVEST_API_KEY') || runtimeEnv('AINVEST_KEY')),
   };
@@ -65,7 +66,7 @@ export default withErrorHandling('intelligence', async (req: Request) => {
   // pull. If every market lane is still empty, make one real refresh now rather
   // than asking the user to wait for the hourly job. If that refresh fails, keep
   // the provider's real failure state — never overwrite it with a green badge.
-  const openbbConfigured = Boolean(runtimeEnv('OPENBB_GATEWAY_URL') && runtimeEnv('OPENBB_GATEWAY_SIGNING_KEY'));
+  const openbbConfigured = new SignedOpenBBGatewayClient().isConfigured();
   const marketPulseMissing = payload.marketPulse.length > 0 && payload.marketPulse.every((item) => item.dataRole === 'unavailable');
   if (!refresh && openbbConfigured && marketPulseMissing) {
     payload = await buildMarketIntelligencePayload({ refresh: true, limit });
