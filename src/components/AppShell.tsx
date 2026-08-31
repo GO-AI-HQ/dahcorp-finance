@@ -8,10 +8,10 @@ export const ROUTES = [
   { path: '/income', label: 'Income' },
   { path: '/portfolio', label: 'Portfolio' },
   { path: '/growth', label: 'Growth' },
-  { path: '/intelligence', label: 'Intelligence' },
+  { path: '/intelligence', label: 'Market' },
   { path: '/strategy-lab', label: 'Strategy Lab' },
   { path: '/modeling-lab', label: 'Modeling Lab' },
-  { path: '/agent', label: 'Agent' },
+  { path: '/agent', label: 'Strategist' },
   { path: '/activity', label: 'Activity' },
   { path: '/settings', label: 'Settings' },
 ] as const;
@@ -66,8 +66,8 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <footer className="footer">
         <p>
-          DAHCorp Finance · Shadow Mode by default. Recommendations are evidence-backed proposals; broker execution
-          requires deterministic safeguards and explicit investor authorization. Nothing here is investment advice.
+          DAHCorp Finance · Nothing moves just because the app suggests it. Recommendations are checked against your
+          safety rules, and broker actions require the level of confirmation you have chosen. This is a decision-support tool, not a promise of returns.
         </p>
       </footer>
     </div>

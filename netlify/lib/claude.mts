@@ -93,7 +93,7 @@ export async function requestRecommendation(request: AgentRequest): Promise<Agen
       brief: deterministicBrief,
       source: 'deterministic',
       model,
-      fallbackReason: 'The Claude request failed. Showing the deterministic policy recommendation instead.',
+      fallbackReason: 'The Claude request failed. Showing the rule-based recommendation instead.',
       usage: null,
     };
   }
@@ -107,9 +107,10 @@ export interface ClaudeResearchBrief {
 }
 
 /**
- * Claude is a research analyst, not an execution authority. This call is used
- * only for material event/modeling work so scheduled intelligence collection
- * does not burn model tokens continuously.
+ * Claude is the independent research analyst, not the final strategist and not
+ * an execution authority. It runs only when a Modeling Lab decision benefits
+ * from a specialist research pass; scheduled data collection never spends
+ * Claude tokens continuously.
  */
 export async function requestResearchBrief(input: {
   question: string;
@@ -117,26 +118,27 @@ export async function requestResearchBrief(input: {
   eventIntelligence?: unknown;
 }): Promise<ClaudeResearchBrief> {
   const anthropic = client();
-  if (!anthropic) return { available: false, model: null, text: 'Claude research unavailable in this runtime.', usage: null };
+  if (!anthropic) return { available: false, model: null, text: 'Claude research is unavailable in this runtime.', usage: null };
   const model = resolveModel();
   try {
     const message = await anthropic.messages.create({
       model,
       max_tokens: 1400,
       system: [
-        'You are the DAHCorp Finance Research Analyst.',
-        'Your job is to analyze supplied filings, policy/news/event evidence and portfolio context, not to place or authorize trades.',
-        'Separate verified facts from interpretation. Call out information latency, contradictory evidence and missing data.',
-        'Explain the consequence for the stated treasury objective in plain English.',
-        'Do not invent prices, historical outcomes, filings or facts not supplied.',
-        'Return a concise research brief that another model can use as evidence.',
+        'You are the independent Research Analyst for DAHCorp Finance.',
+        'Your job is to pressure-test the supplied portfolio, market, filings, fund, options, earnings, policy and public-disclosure evidence before the Strategist makes the final recommendation.',
+        'You do not place trades, authorize trades, change safety rules or decide that money is investable.',
+        'Separate verified facts from interpretation. Point out stale information, contradictory evidence and important missing data.',
+        'Pay special attention to whether the evidence actually changes the user’s financial goal or whether doing nothing remains the better choice.',
+        'Do not invent prices, yields, historical outcomes, filings, bank eligibility, fund holdings or facts that were not supplied.',
+        'Write a concise second-opinion research brief in normal human language. Another model will use it as evidence, not as authority.',
       ].join('\n'),
       messages: [{
         role: 'user',
         content: [
           `QUESTION\n${input.question}`,
-          `PORTFOLIO / STRATEGY DIGEST\n${JSON.stringify(input.digest)}`,
-          `EVENT INTELLIGENCE\n${JSON.stringify(input.eventIntelligence ?? { status: 'not_available' })}`,
+          `PORTFOLIO AND PLAN\n${JSON.stringify(input.digest)}`,
+          `CURRENT RESEARCH\n${JSON.stringify(input.eventIntelligence ?? { status: 'not_available' })}`,
         ].join('\n\n'),
       }],
     });
