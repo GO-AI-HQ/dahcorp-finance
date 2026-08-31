@@ -76,8 +76,9 @@ export function StrategyLab() {
     return () => window.clearTimeout(handle);
   }, [inputs, scopeNonce]);
 
+  const incomeEvidenceAvailable = Boolean(result && result.modeledRate > 0);
   const series = useMemo<ProjectionSeries[]>(
-    () => (result?.scenarios ?? []).map((scenario) => ({
+    () => !result || result.modeledRate <= 0 ? [] : result.scenarios.map((scenario) => ({
       name: SCENARIO_NAME[scenario.name] ?? scenario.label,
       color: SCENARIO_COLOR[scenario.name] ?? CHART.intel,
       points: scenario.projection.months.map((month) => ({ month: month.month, monthlyIncome: month.monthlyIncome })),
@@ -91,51 +92,67 @@ export function StrategyLab() {
   const patch = (next: Partial<Inputs>) => setInputs((current) => current ? { ...current, ...next } : current);
   const base = result.scenarios.find((scenario) => scenario.name === 'base') ?? result.scenarios[0];
   const conservative = result.scenarios.find((scenario) => scenario.name === 'conservative') ?? result.scenarios[0];
+  const unavailableLabel = 'Waiting for income data';
 
   return (
     <>
       <PageHead
         eyebrow="Strategy Lab"
         title="Change the assumptions — not the holdings"
-        lede="Use Strategy Lab for contribution pace, reinvestment, one-time funding and goal timing. It deliberately stays simple and never recommends or places a security transaction. Use Modeling Lab when the question is what to BUY, SELL, rotate or hold."
+        lede="Use Strategy Lab to test how much you add, how much income you reinvest, one-time deposits and how long a goal may take. Use Modeling Lab when the question becomes what to buy, sell, rotate or leave alone."
         action={busy ? <Badge tone="ice" glyph="◌">Recalculating</Badge> : <Badge tone="neutral">Planning only</Badge>}
       />
 
       <DataBanner containsMockData={result.containsMockData} sourceNotes={result.sourceNotes} asOf={result.asOf} />
 
+      {!incomeEvidenceAvailable ? (
+        <div className="banner banner--warning section">
+          <div>
+            <strong>Income projections are waiting for verified distribution history.</strong>
+            <p className="meta">Your holdings and contribution settings are available, but Strategy Lab will not invent a yield for YMAG, NVDY or another income holding. Once verified distribution history reaches the income engine, the graph, goal timing and self-funding math will return automatically.</p>
+          </div>
+        </div>
+      ) : null}
+
       <div className="grid grid--2 section">
         <Card label="This lab answers" title="What happens if I change the plan?">
-          <p className="meta">Contribution amount, DRIP rate, lump-sum timing, target income and time horizon are broad planning assumptions. The three lines below show sensitivity to those assumptions.</p>
+          <p className="meta">Contribution amount, reinvestment rate, one-time funding, target income and time horizon are planning choices. The lines below show how those choices could change the path once verified income data is available.</p>
         </Card>
-        <Card label="Need a transaction decision?" title="Use Modeling Lab for a Proposed Model">
-          <p className="meta">Modeling Lab adds the fourth Proposed Model line and can turn a supported recommendation into staged BUY/SELL legs, then live broker previews where execution is supported.</p>
+        <Card label="Need a buy or sell decision?" title="Take it to Modeling Lab">
+          <p className="meta">Modeling Lab reads the actual cash queues, holdings and market evidence, then compares specific securities with the option of doing nothing.</p>
           <p style={{ marginTop: 10 }}><Link className="btn btn--gold" to="/modeling-lab">Open Modeling Lab</Link></p>
         </Card>
       </div>
 
       <Card label="What the graph means" title="Three ways the same planning assumptions could develop" tight>
         <div className="grid grid--3">
-          <div className="panel"><strong>Conservative outcome</strong><p className="meta">Uses the portfolio's conservative modeled rate. This is the cautious planning line.</p></div>
-          <div className="panel"><strong>Current modeled path</strong><p className="meta">Uses today's configured assumptions and current holdings. This is the main planning line.</p></div>
+          <div className="panel"><strong>Conservative outcome</strong><p className="meta">Uses a more cautious version of the verified income rate.</p></div>
+          <div className="panel"><strong>Current modeled path</strong><p className="meta">Uses the current verified income history and the choices you set below.</p></div>
           <div className="panel"><strong>Higher-rate illustration</strong><p className="meta">Shows the upper modeled case. It is not a forecast or promise.</p></div>
         </div>
       </Card>
 
-      <Card label="Calculation scope" title="Which capital this plan is measuring" tight>
+      <Card label="What this plan includes" title="Which capital this plan is measuring" tight>
         <ScopeSelector scope={result.scope} options={result.scopeOptions} onChanged={() => setScopeNonce((n) => n + 1)} />
       </Card>
 
       <div className="grid grid--wide-left section">
         <Card label="Goal path" title="Projected monthly investment income">
-          <ProjectionChart series={series} target={result.target} />
-          <p className="meta" style={{ marginTop: 10 }}>Each line uses the same contribution and DRIP choices below; only the modeled return/distribution assumptions differ.</p>
+          {incomeEvidenceAvailable ? (
+            <ProjectionChart series={series} target={result.target} />
+          ) : (
+            <div className="panel" style={{ minHeight: 220, display: 'grid', placeItems: 'center', textAlign: 'center' }}>
+              <div><strong>Waiting for verified income history</strong><p className="meta">The chart will appear when the app can calculate a real distribution rate instead of assuming one.</p></div>
+            </div>
+          )}
+          <p className="meta" style={{ marginTop: 10 }}>{incomeEvidenceAvailable ? 'Each line uses the same contribution and reinvestment choices below; only the modeled income-rate assumptions differ.' : 'Your contribution choices are still saved and editable while income data is unavailable.'}</p>
         </Card>
 
         <Card label="Your choices" title="Change the plan">
           <div className="stack">
             <label className="field"><span className="field__label">Monthly contribution — {formatMoney(inputs.monthlyContribution, 0)}</span><input type="range" min={0} max={3000} step={25} value={inputs.monthlyContribution} onChange={(e) => patch({ monthlyContribution: Number(e.target.value) })} /><span className="meta">How much new money you plan to add each month.</span></label>
             <label className="field"><span className="field__label">Monthly income goal — {formatMoney(inputs.targetMonthlyIncome, 0)}</span><input type="range" min={50} max={5000} step={50} value={inputs.targetMonthlyIncome} onChange={(e) => patch({ targetMonthlyIncome: Number(e.target.value) })} /></label>
-            <label className="field"><span className="field__label">Reinvest distributions — {formatPct(inputs.dripRate, 0)}</span><input type="range" min={0} max={1} step={0.05} value={inputs.dripRate} onChange={(e) => patch({ dripRate: Number(e.target.value) })} /><span className="meta">100% means every modeled distribution goes back into the income engine.</span></label>
+            <label className="field"><span className="field__label">Reinvest distributions — {formatPct(inputs.dripRate, 0)}</span><input type="range" min={0} max={1} step={0.05} value={inputs.dripRate} onChange={(e) => patch({ dripRate: Number(e.target.value) })} /><span className="meta">100% means every modeled distribution goes back into the income holdings.</span></label>
             <label className="field"><span className="field__label">One-time contribution — {formatMoney(inputs.lumpSum, 0)}</span><input type="range" min={0} max={50000} step={100} value={inputs.lumpSum} onChange={(e) => patch({ lumpSum: Number(e.target.value) })} /></label>
             <label className="field"><span className="field__label">Apply one-time contribution in month {inputs.lumpSumMonth}</span><input type="range" min={0} max={Math.max(1, inputs.horizonMonths)} step={1} value={Math.min(inputs.lumpSumMonth, inputs.horizonMonths)} onChange={(e) => patch({ lumpSumMonth: Number(e.target.value) })} /></label>
             <label className="field"><span className="field__label">Look ahead — {formatMonths(inputs.horizonMonths)}</span><input type="range" min={6} max={120} step={6} value={inputs.horizonMonths} onChange={(e) => patch({ horizonMonths: Number(e.target.value) })} /></label>
@@ -144,9 +161,9 @@ export function StrategyLab() {
       </div>
 
       <div className="grid grid--3 section">
-        <StatCard label="Current modeled path" value={base.projection.monthsToTarget == null ? 'Goal not reached' : formatMonths(base.projection.monthsToTarget)} tone="gold" caption={`Ending modeled income ${formatMoney(base.projection.finalMonthlyIncome)}/mo with ${formatMoney(base.projection.finalIncomeCapital, 0)} in income-producing capital.`} />
-        <StatCard label="Conservative outcome" value={conservative.projection.monthsToTarget == null ? 'Goal not reached' : formatMonths(conservative.projection.monthsToTarget)} caption={`Ending modeled income ${formatMoney(conservative.projection.finalMonthlyIncome)}/mo. Use this line when planning with more margin for error.`} />
-        <StatCard label="Cash you add" value={formatMoney(inputs.monthlyContribution, 0) + '/mo'} caption={`Plus ${formatMoney(inputs.lumpSum, 0)} one-time in month ${inputs.lumpSumMonth}. DRIP ${formatPct(inputs.dripRate, 0)}.`} />
+        <StatCard label="Current modeled path" value={!incomeEvidenceAvailable ? unavailableLabel : base.projection.monthsToTarget == null ? 'Goal not reached' : formatMonths(base.projection.monthsToTarget)} tone="gold" caption={!incomeEvidenceAvailable ? 'Verified distribution history is required before the app can turn your contributions into an income projection.' : `Ending modeled income ${formatMoney(base.projection.finalMonthlyIncome)}/mo with ${formatMoney(base.projection.finalIncomeCapital, 0)} in income-producing capital.`} />
+        <StatCard label="Conservative outcome" value={!incomeEvidenceAvailable ? unavailableLabel : conservative.projection.monthsToTarget == null ? 'Goal not reached' : formatMonths(conservative.projection.monthsToTarget)} caption={!incomeEvidenceAvailable ? 'No conservative yield is guessed when the underlying income rate is unknown.' : `Ending modeled income ${formatMoney(conservative.projection.finalMonthlyIncome)}/mo. Use this line when planning with more margin for error.`} />
+        <StatCard label="Cash you add" value={formatMoney(inputs.monthlyContribution, 0) + '/mo'} caption={`Plus ${formatMoney(inputs.lumpSum, 0)} one-time in month ${inputs.lumpSumMonth}. Reinvest ${formatPct(inputs.dripRate, 0)} of modeled distributions.`} />
       </div>
 
       <div className="grid grid--2 section">
@@ -158,8 +175,8 @@ export function StrategyLab() {
                 {result.requiredContributions.map((row) => (
                   <tr key={row.months}>
                     <th>{formatMonths(row.months)}</th>
-                    <td className="num">{row.monthlyContribution.achieved && row.monthlyContribution.monthlyContribution != null ? `${formatMoney(row.monthlyContribution.monthlyContribution, 0)}/mo` : 'Not reachable'}</td>
-                    <td className="num">{row.conservativeMonthlyContribution.achieved && row.conservativeMonthlyContribution.monthlyContribution != null ? `${formatMoney(row.conservativeMonthlyContribution.monthlyContribution, 0)}/mo` : 'Not reachable'}</td>
+                    <td className="num">{!incomeEvidenceAvailable ? 'Waiting for income data' : row.monthlyContribution.achieved && row.monthlyContribution.monthlyContribution != null ? `${formatMoney(row.monthlyContribution.monthlyContribution, 0)}/mo` : 'Not reachable'}</td>
+                    <td className="num">{!incomeEvidenceAvailable ? 'Waiting for income data' : row.conservativeMonthlyContribution.achieved && row.conservativeMonthlyContribution.monthlyContribution != null ? `${formatMoney(row.conservativeMonthlyContribution.monthlyContribution, 0)}/mo` : 'Not reachable'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -167,10 +184,10 @@ export function StrategyLab() {
           </div>
         </Card>
 
-        <Card label="Decision handoff" title="When an assumption becomes a security decision">
-          <p className="meta">If this planning exercise changes the amount you want to deploy, take the question to Modeling Lab. Modeling Lab reads the actual cash queues and holdings, compares concrete securities or holding cash, and returns a Proposed Model with broker-specific transaction legs.</p>
+        <Card label="Next decision" title="When a planning choice becomes a buy or sell question">
+          <p className="meta">If this plan changes how much you want to deploy, take the question to Modeling Lab. It reads the actual cash queues and holdings, compares specific securities with holding cash, and returns a proposed action that still has to pass the safety rules.</p>
           <div className="row" style={{ gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
-            <Link className="btn btn--gold" to={`/modeling-lab?question=${encodeURIComponent(`Given a monthly contribution of ${formatMoney(inputs.monthlyContribution, 0)}, a ${formatMoney(inputs.targetMonthlyIncome, 0)}/month income goal and ${formatPct(inputs.dripRate, 0)} DRIP, what actual portfolio action should I take next, if any?`)}`}>Take this plan to Modeling Lab</Link>
+            <Link className="btn btn--gold" to={`/modeling-lab?question=${encodeURIComponent(`Given a monthly contribution of ${formatMoney(inputs.monthlyContribution, 0)}, a ${formatMoney(inputs.targetMonthlyIncome, 0)}/month income goal and ${formatPct(inputs.dripRate, 0)} reinvestment, what actual portfolio action should I take next, if any?`)}`}>Take this plan to Modeling Lab</Link>
             <Link className="btn btn--ghost" to="/growth?tab=opportunities">See opportunities</Link>
           </div>
         </Card>
