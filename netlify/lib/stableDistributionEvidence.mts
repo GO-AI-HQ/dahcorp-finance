@@ -84,9 +84,6 @@ function mergeEvidence(providerEvents: DistributionEvent[], brokerEvents: Distri
   for (const event of providerEvents) {
     byKey.set(`${event.symbol.toUpperCase()}|${event.payDate}`, event);
   }
-  // For a payment actually observed in the investor's brokerage account, the
-  // broker-derived gross amount per share is the strongest evidence for that
-  // pay date. It replaces a provider row only for that exact date.
   for (const event of brokerEvents) {
     byKey.set(`${event.symbol.toUpperCase()}|${event.payDate}`, event);
   }
@@ -126,14 +123,29 @@ async function persistSymbolSnapshot(symbol: string, events: DistributionEvent[]
 }
 
 /**
+ * Persist freshly verified distribution rows from scheduled/background work.
+ * Interactive portfolio requests intentionally do not write these snapshots;
+ * that keeps page loads bounded while preserving the last-good evidence model.
+ */
+export async function persistStableDistributionEvidence(
+  events: DistributionEvent[],
+  sourceLabel = 'scheduled verified distribution refresh',
+): Promise<void> {
+  const symbols = normalizedSymbols(events.map((event) => event.symbol));
+  for (const symbol of symbols) {
+    const rows = events.filter((event) => event.symbol.toUpperCase() === symbol);
+    if (!rows.length) continue;
+    await persistSymbolSnapshot(symbol, rows, [sourceLabel]);
+  }
+}
+
+/**
  * Server-only stability wrapper for income evidence.
  *
  * Ownership/share count remains brokerage authoritative. Distribution history
  * comes from the configured provider stack (FMP preferred, OpenBB fallback),
- * may be reconciled with actual broker income events, and is persisted as the
- * last verified basis. A temporary provider miss therefore becomes STALE
- * evidence instead of silently turning a valid self-funding calculation into
- * UNKNOWN.
+ * may be reconciled with actual broker income events, and can fall back to the
+ * last verified basis. Interactive reads never persist snapshots synchronously.
  */
 export class StableDistributionMarketDataProvider implements MarketDataProvider {
   readonly id: string;
@@ -145,8 +157,8 @@ export class StableDistributionMarketDataProvider implements MarketDataProvider 
     this.isMock = base.isMock;
     this.sourceNotes = [
       ...(base.sourceNotes ?? []),
-      'Held-position share counts come from the connected broker. Distribution history uses FMP first and OpenBB as fallback, then retains the last verified per-symbol basis across temporary provider misses.',
-      'When brokerage income events are available, actual gross cash received is used to verify the corresponding held-position payment. Retained evidence is labeled stale rather than presented as freshly updated.',
+      'Held-position share counts come from the connected broker. Distribution history uses FMP first and OpenBB as fallback, then may reuse the last verified per-symbol basis across temporary provider misses.',
+      'Broker-reported income can verify actual cash received. Retained distribution evidence is planning data only and is never treated as fresh execution pricing.',
     ];
   }
 
@@ -161,10 +173,15 @@ export class StableDistributionMarketDataProvider implements MarketDataProvider 
   async getDistributions(symbols: string[], asOf: string, days: number): Promise<DistributionEvent[]> {
     const wanted = normalizedSymbols(symbols);
     const brokerRows = brokerDistributions(this.incomeEvents, wanted);
-    const providerRows = await this.base.getDistributions(wanted, asOf, days).catch(() => [] as DistributionEvent[]);
-    const stored = await storedSnapshots(wanted).catch(() => new Map<string, StoredDistributionSnapshot>());
-    const out: DistributionEvent[] = [];
 
+    // Run the live-provider request and retained-evidence read concurrently so
+    // the database lookup does not add a second serial wait to every page load.
+    const [providerRows, stored] = await Promise.all([
+      this.base.getDistributions(wanted, asOf, days).catch(() => [] as DistributionEvent[]),
+      storedSnapshots(wanted).catch(() => new Map<string, StoredDistributionSnapshot>()),
+    ]);
+
+    const out: DistributionEvent[] = [];
     for (const symbol of wanted) {
       const providerForSymbol = providerRows.filter((row) => row.symbol.toUpperCase() === symbol);
       const brokerForSymbol = brokerRows.filter((row) => row.symbol.toUpperCase() === symbol);
@@ -172,15 +189,6 @@ export class StableDistributionMarketDataProvider implements MarketDataProvider 
 
       if (current.length) {
         out.push(...current);
-        const hasFreshProviderEvidence = providerForSymbol.some((row) => row.dataQuality !== 'stale');
-        const hasBrokerEvidence = brokerForSymbol.length > 0;
-        if (hasFreshProviderEvidence || hasBrokerEvidence) {
-          const sources = [
-            ...(providerForSymbol.length ? ['FMP/OpenBB provider stack'] : []),
-            ...(brokerForSymbol.length ? ['broker realized income'] : []),
-          ];
-          await persistSymbolSnapshot(symbol, current, sources).catch(() => undefined);
-        }
         continue;
       }
 
