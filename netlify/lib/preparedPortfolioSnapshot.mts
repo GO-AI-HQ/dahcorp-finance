@@ -5,6 +5,7 @@ import { buildAnalysisContext, type AnalysisContext } from '../../src/services/a
 import { createDataPlaneSnapshot, type DataPlaneProviderId, type SnapshotFreshness } from '../../src/data/dataPlane.js';
 import { buildServerContext } from './context.mts';
 import { loadDataPlaneSnapshot, saveDataPlaneSnapshot } from './dataPlaneSnapshotStore.mts';
+import { loadPreparedMarketPayload } from './preparedMarketSnapshot.mts';
 
 const HOUR = 60 * 60_000;
 
@@ -52,8 +53,10 @@ function providersForContext(ctx: Awaited<ReturnType<typeof buildServerContext>>
 
 /**
  * Build the complete expensive portfolio/market analysis basis once in a
- * background refresh and atomically persist it. Interactive consumers will be
- * migrated to this prepared state after the refresh path is proven stable.
+ * background refresh and atomically persist it. Interactive consumers read this
+ * prepared state; the independently refreshed Market Snapshot is overlaid at
+ * read time so quote/history/distribution cadence is no longer tied to page
+ * navigation or to the broker snapshot cadence.
  */
 export async function refreshPreparedPortfolioSnapshot(): Promise<{
   payload: PreparedPortfolioPayload;
@@ -80,14 +83,15 @@ export async function refreshPreparedPortfolioSnapshot(): Promise<{
     providers,
     primaryProvider: null,
     mode: providers.length > 1 ? 'composed' : 'live',
-    // Transitional composite cadence. Quote/history refresh will be split into
-    // its own Market Snapshot before execution-adjacent use is considered.
+    // Broker/account continuity window. Market evidence has its own independent
+    // per-family freshness rules and is overlaid when this snapshot is read.
     freshnessPolicy: { freshForMs: 75 * 60_000, staleUsableForMs: 6 * HOUR },
     payload,
     usable: hasPortfolioState && !ctx.snapshot.containsMockData,
     containsMockData: ctx.snapshot.containsMockData,
     notes: [
       'Prepared Portfolio Snapshot is a display/analysis basis, not execution state.',
+      'Market evidence may be replaced at read time by the independently refreshed Market Snapshot.',
       'A future order must revalidate broker cash, holdings, quote and deterministic risk immediately before submission.',
       ...ctx.snapshot.sourceNotes,
     ],
@@ -97,10 +101,9 @@ export async function refreshPreparedPortfolioSnapshot(): Promise<{
 }
 
 /**
- * Read-only reconstruction of deterministic analysis from a prepared snapshot.
- * It performs zero broker/provider calls. Retained evidence is explicitly marked
- * stale in the reconstructed PortfolioSnapshot so downstream UI/model context
- * cannot mistake continuity for a live refresh.
+ * Read-only reconstruction of deterministic analysis from prepared snapshots.
+ * It performs zero broker/provider calls. The portfolio/broker basis and market
+ * evidence are refreshed on separate schedules, then joined locally here.
  */
 export async function loadPreparedAnalysisContext(now: Date = new Date()): Promise<PreparedAnalysisContext | null> {
   const loaded = await loadDataPlaneSnapshot<PreparedPortfolioPayload>('portfolio', now);
@@ -108,15 +111,38 @@ export async function loadPreparedAnalysisContext(now: Date = new Date()): Promi
   if (!loaded.snapshot.quality.usable || !isPreparedPortfolioPayload(loaded.snapshot.payload)) return null;
 
   const payload = loaded.snapshot.payload;
-  const retained = loaded.freshness === 'stale_usable';
-  const snapshot: PortfolioSnapshot = retained ? {
+  const market = await loadPreparedMarketPayload(now);
+  const portfolioRetained = loaded.freshness === 'stale_usable';
+  const marketRetained = market?.freshness === 'stale_usable';
+  const marketDistributionSymbols = new Set(market?.payload.evidence.distributions.map((row) => row.symbol.toUpperCase()) ?? []);
+
+  const mergedDistributions = market
+    ? [
+        ...payload.snapshot.distributions.filter((row) => !marketDistributionSymbols.has(row.symbol.toUpperCase())),
+        ...market.payload.distributions,
+      ].sort((a, b) => a.exDate.localeCompare(b.exDate) || a.symbol.localeCompare(b.symbol))
+    : payload.snapshot.distributions;
+
+  const containsMockData = payload.snapshot.containsMockData || Boolean(market?.containsMockData);
+  const snapshot: PortfolioSnapshot = {
     ...payload.snapshot,
-    dataQuality: payload.snapshot.containsMockData ? 'mock' : 'stale',
+    quotes: market ? { ...payload.snapshot.quotes, ...market.payload.quotes } : payload.snapshot.quotes,
+    priceHistory: market ? { ...payload.snapshot.priceHistory, ...market.payload.priceHistory } : payload.snapshot.priceHistory,
+    distributions: mergedDistributions,
+    containsMockData,
+    dataQuality: containsMockData
+      ? 'mock'
+      : portfolioRetained || marketRetained
+        ? 'stale'
+        : payload.snapshot.dataQuality,
     sourceNotes: [...new Set([
       ...payload.snapshot.sourceNotes,
-      `Prepared portfolio evidence is retained from ${loaded.snapshot.observedAt}; the latest background refresh has not yet replaced it.`,
+      ...(market?.notes ?? []),
+      ...(market ? [`Prepared Market Snapshot composed at ${market.payload.builtAt}; quote/history/distribution evidence is joined locally without provider calls.`] : []),
+      ...(portfolioRetained ? [`Prepared portfolio evidence is retained from ${loaded.snapshot.observedAt}; the latest background broker refresh has not yet replaced it.`] : []),
+      ...(marketRetained ? ['Prepared market composition is retained last-known-good; each included symbol still satisfies its own evidence-family stale-usable policy.'] : []),
     ])],
-  } : payload.snapshot;
+  };
   const analysis = buildAnalysisContext(snapshot, payload.config);
 
   return {
