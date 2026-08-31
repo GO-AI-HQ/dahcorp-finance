@@ -1,8 +1,10 @@
 /**
  * Per-request server context.
  *
- * Assembles the strategy config, live broker state, market-data provider and the
- * derived analysis in one place so every function sees the same numbers.
+ * Broker/account convergence is deliberately separable from market-data
+ * acquisition. Scheduled portfolio refreshes can therefore refresh brokerage
+ * state and compose it with the prepared Market Snapshot without repeating the
+ * quote/history/distribution fan-out owned by the market refresh tiers.
  */
 import { buildAnalysisContext, type AnalysisContext } from '../../src/services/analysis.js';
 import { buildPortfolioSnapshot, seedPositionSource, type PositionSource } from '../../src/services/snapshot.js';
@@ -37,6 +39,20 @@ export interface ServerContext extends AnalysisContext {
   configPersisted: boolean;
   configNote: string | null;
   provider: MarketDataProvider;
+  brokers: BrokerStatus[];
+  adapters: BrokerAdapter[];
+}
+
+/**
+ * Broker/account state with policy/config attached, but no market-data provider
+ * call and no quote/history/distribution request.
+ */
+export interface BrokerStateBasis {
+  asOf: string;
+  config: StrategyConfig;
+  configPersisted: boolean;
+  configNote: string | null;
+  source: PositionSource;
   brokers: BrokerStatus[];
   adapters: BrokerAdapter[];
 }
@@ -274,7 +290,28 @@ export function selectMarketProvider(
     : base;
 }
 
-export async function buildServerContext(options: { asOf?: string } = {}): Promise<ServerContext> {
+/**
+ * Construct the live market provider for a known broker/source basis. This is
+ * intentionally separate from broker convergence so callers can choose a
+ * prepared market provider instead and avoid network duplication.
+ */
+export function buildLiveMarketProviderForSource(
+  adapters: BrokerAdapter[],
+  config: StrategyConfig,
+  source: PositionSource,
+  env: NodeJS.ProcessEnv = process.env,
+): MarketDataProvider {
+  return new StableDistributionMarketDataProvider(
+    selectMarketProvider(adapters, config, env),
+    source.incomeEvents ?? [],
+  );
+}
+
+/**
+ * Refresh brokerage/account state only. No market-data provider is selected or
+ * called in this function.
+ */
+export async function buildBrokerStateBasis(options: { asOf?: string } = {}): Promise<BrokerStateBasis> {
   const asOf = options.asOf ?? todayISO();
   const strictProduction = productionDataOnly();
   const [{ config, persisted, note }, storedSource, robinhoodGateway] = await Promise.all([
@@ -295,23 +332,39 @@ export async function buildServerContext(options: { asOf?: string } = {}): Promi
     ? { ...mandated, notes: [...mandated.notes, 'External household liquidity has not been confirmed; reserve status is shown as not entered rather than $0 underfunded.'] }
     : mandated;
 
-  const selectedProvider = selectMarketProvider(adapters, config);
-  const provider = new StableDistributionMarketDataProvider(selectedProvider, source.incomeEvents ?? []);
-  const snapshot = await buildPortfolioSnapshot({ asOf, provider, source });
-  const analysisContext = buildAnalysisContext(snapshot, config);
+  return {
+    asOf,
+    config,
+    configPersisted: persisted,
+    configNote: note,
+    source,
+    brokers: describeBrokers(adapters, process.env as Record<string, string | undefined>),
+    adapters,
+  };
+}
 
+/** Preserve the existing "not entered" reserve semantics in any rebuilt analysis. */
+export function applyExternalLiquiditySemantics(ctx: AnalysisContext, config: StrategyConfig): AnalysisContext {
   if (config.externalLiquidityCurrent === 0) {
-    analysisContext.analysis.totals.externalLiquidityGap = 0;
-    analysisContext.analysis.totals.externalReserveUnderfunded = false;
+    ctx.analysis.totals.externalLiquidityGap = 0;
+    ctx.analysis.totals.externalReserveUnderfunded = false;
   }
+  return ctx;
+}
+
+export async function buildServerContext(options: { asOf?: string } = {}): Promise<ServerContext> {
+  const basis = await buildBrokerStateBasis(options);
+  const provider = buildLiveMarketProviderForSource(basis.adapters, basis.config, basis.source);
+  const snapshot = await buildPortfolioSnapshot({ asOf: basis.asOf, provider, source: basis.source });
+  const analysisContext = applyExternalLiquiditySemantics(buildAnalysisContext(snapshot, basis.config), basis.config);
 
   return {
     ...analysisContext,
-    configPersisted: persisted,
-    configNote: note,
+    configPersisted: basis.configPersisted,
+    configNote: basis.configNote,
     provider,
-    brokers: describeBrokers(adapters, process.env as Record<string, string | undefined>),
-    adapters,
+    brokers: basis.brokers,
+    adapters: basis.adapters,
   };
 }
 
