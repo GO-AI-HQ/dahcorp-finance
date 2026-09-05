@@ -1,0 +1,26 @@
+name: Institutional Memory Check
+on:
+  pull_request:
+    branches: ["main"]
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+jobs:
+  memory:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate institutional memory
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python - <<'PY'
+          import os,pathlib,sys
+          b=os.environ.get('PR_BODY') or ''; n=int(os.environ['PR_NUMBER'])
+          for x in ['## Institutional Memory Impact','### Documentation updated']:
+              if x not in b: print('Missing',x); sys.exit(1)
+          p=pathlib.Path(f'docs/ai/pr-history/PR-{n:03d}.md')
+          if not p.exists(): print('Missing',p); sys.exit(1)
+          material=any(x in b for x in ['[x] Architecture changed','[x] Current state changed','[x] Operating policy changed','[x] Broker/provider authority changed','[x] Persistence/security boundary changed','[x] Agent role/MCP/approval changed'])
+          if material and '[x] No knowledge change' in b: print('Contradictory declaration'); sys.exit(1)
+          print('Institutional memory valid')
+          PY
